@@ -26,7 +26,7 @@ git switch PROD
 git add .
 
 # 10. 로컬 add한 소스 commit 항목에 추가(코멘트 추가)
-git commit -m "AI 자동화 작업 프로그램"
+git commit -m "PDF TO HWPX 프로그램"
 
 # 11. 로컬 commit한 항목 리모트 브랜치에 push
 git push origin PROD
