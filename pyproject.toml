@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-to-hwpx"
+version = "0.1.0"
+description = "로컬 전용 PDF -> HWPX(OWPML) 변환 도구 (서버 전송 없음)"
+readme = "HARNESS-README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: Microsoft :: Windows",
+]
+
+# 03단계(docs/harness/03-system-design.md) §2-1이 확정한 런타임 의존성만 포함한다.
+# platformdirs는 §2-1 "로컬 경로/설정" 행 + §7-1 로깅 저장 위치(user_log_dir)에
+# 근거가 있으며, unit-0 자신의 파일(common/logging_setup.py)이 직접 사용하므로
+# 함께 등록했다(unit-0-note.md "설계서 대비 편차" 참고).
+dependencies = [
+    "pdfplumber>=0.11.0,<1.0",
+    "pypdf>=6.0.0,<7.0",
+    "lxml>=5.0.0,<7.0",
+    "pytesseract>=0.3.10,<1.0",
+    "platformdirs>=4.0.0,<5.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+# CLI 진입점(pdftohwpx, 03 §4-3)은 cli/__main__.py를 만드는 unit-11이 이
+# 섹션에 [project.scripts]를 추가한다. unit-0은 아직 존재하지 않는 모듈을
+# 가리키는 항목을 미리 선언하지 않는다(unit-0-note.md 참고).
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pdf_to_hwpx*"]
