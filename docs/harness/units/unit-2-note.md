@@ -357,3 +357,88 @@ BitsPerComponent 관련: RGB/CMYK 16비트, Indexed 외 다채널 저비트심�
 | REQ-003 | 비고 | 추가: "**05단계 2차 재작업(2026-09-28, DEC-028)**: FlateDecode/LZWDecode/RunLengthDecode/무필터 이미지를 표준 필터로 압축 해제 후 Width/Height/BitsPerComponent/ColorSpace(Indexed 포함)/Decode로 해석해 무손실 PNG로 합성, 합성 직후 왕복 디코드 검증을 통과해야만 반환(`image_format='png'`). DeviceCMYK/미지원 BitsPerComponent/임의 Decode는 명시적 예외(`_UnsupportedRawImageEncodingError`)로 실패, 왕복검증 실패는 `_PngRoundTripVerificationError`로 실패 -- 둘 다 조용히 누락되지 않음(unit-2-note.md §9 참고). 단, 현재 unit-8(오케스트레이터)이 미착수라 이 예외가 페이지 전체 스킵으로 이어지는 알려진 한계 있음(§9-4)." |
 
 `decisions.md` 갱신 요청: **신규 요청 없음** -- DEC-028은 오케스트레이터가 이미 기록 완료했고(호출 지시문 근거), 이번 재작업은 그 결정을 구현으로 해소 확인하는 절차였다. 다만 unit-8 착수 전 참고용으로, §9-4의 "이미지 실패 예외 처리 세분화(개별 이미지 제외 + 이미지 단위 경고)"는 `ir.py`/orchestrator 설계 시점에 규칙 A 질문으로 다시 제기될 가능성이 있다는 점만 여기 남긴다(지금 당장 결정이 필요한 사안은 아님, 정보 전달 목적).
+
+---
+
+## 12. 3차 재작업(2026-09-28) — 07단계 DEF-INT-001(High) 반려에 따른 수정
+
+- 트리거: 06단계에서 unit-2는 Verified/PASS였으나(9절 2차 재작업까지 반영), **07단계(Feature A 통합테스트, `docs/harness/feature-A-integration-test.md`)**가 unit-0~8을 monkeypatch 없이 실제 구현으로 엮어 돌린 결과 **DEF-INT-001(High, Open)**을 발견해 05단계로 반려했다. 이 절이 그 재작업 산출물이다.
+- 속도 트랙: **L3(변경 없음)** — 이번 호출 지시문에도 트랙 재지정이 없어 기존 L3를 유지한다(Tier=High, DEC-021, 완화 없음 — 지시문에 명시된 그대로).
+- 병렬 실행 여부: **단독(순차) 호출**이었다(호출 프롬프트에 "병렬 웨이브" 명시 없음). 파일 범위도 `pdf_to_hwpx/pdf_reader/image_extractor.py` 1개 파일로 한정(지시문이 명시한 unit-2 확정 파일 범위, 03 §1-3 그대로).
+- 수정 파일: `pdf_to_hwpx/pdf_reader/image_extractor.py` 1개 파일만 수정(신규 헬퍼 함수 3개 추가, `_raw_bytes_and_format` 로직 확장, 모듈 docstring에 "3차 재작업" 절 추가). `tests/integration/test_feature_a_pipeline.py`(07 소유, 지시문이 명시적으로 수정 금지)는 손대지 않았다. `tests/pdf_reader/test_image_extractor.py`(06 소유)도 손대지 않았다(아래 12-4절에 06을 위한 갱신 필요 사항을 남김). `ir.py`/`pyproject.toml`/`hwpx_writer/image_embedder.py`/`hwpx_kernel/container.py` 어느 것도 수정하지 않았다.
+
+### 12-1. 근본 원인 재확인 (07 결함 리포트 + 코드 직접 확인, 추측 없음)
+
+기존(2차 재작업까지의) `_raw_bytes_and_format`는 `/Filter`가 배열일 때 **마지막 항목만** 보고, 그것이 "완결된 이미지 코덱"(`_SELF_CONTAINED_CODEC_FILTER_TO_FORMAT`: DCTDecode/JPXDecode/CCITTFaxDecode/JBIG2Decode)이면 `xobj._data`(어떤 필터도 해석하지 않은 원본 스트림)를 곧바로 그 코덱의 원본 바이트로 반환했다. 필터가 1개뿐이면 이 가정이 정확하지만, 앞에 다른 필터(전형적으로 `/ASCII85Decode`, 전송 인코딩)가 있으면 `_data`는 여전히 그 앞단 필터로 인코딩된 상태인데도 `image_format="jpeg"`(또는 해당 코덱 이름)로 잘못 라벨링되어 반환됐다.
+
+07단계가 이 조합을 **reportlab의 `canvas.drawImage()`만 호출한, 지극히 평범한 PDF**에서 실측으로 재현했다(`tests/integration/test_feature_a_pipeline.py::_build_reportlab_wrapped_image_pdf` — `/Filter [/ASCII85Decode /DCTDecode]`가 reportlab의 관측된 기본 동작). 이 조합은 하류(unit-7 `image_embedder.py`의 `SUPPORTED_IMAGE_FORMATS` 화이트리스트, unit-4 `container.py::add_bin_data()`)가 포맷 **이름**만 보고 바이트 유효성을 검증하지 않기 때문에 아무도 걸러내지 못하고 최종 `.hwpx`까지 그대로 흘러갔다(`convert()`가 `success=True`, `warnings=[]`로 이상을 전혀 보고하지 않음).
+
+### 12-2. §7-4-3 판단 정정 (지시문 필수 요청 사항)
+
+1차 재작업(§7-4-3)은 이 다중 필터 연쇄 조합을 "실무에서 극히 드묾"으로 판단해 재현 테스트 없이 "알려진 한계"로만 기록했다. **이 판단을 여기서 정정한다**: 07단계가 실측으로 보여준 대로, 이 조합은 결코 드문 예외가 아니라 **reportlab 같은 널리 쓰이는 PDF 생성 라이브러리의 기본 산출물**이다. "재현 테스트가 없다"는 사실이 "실무에서 드물다"는 근거가 될 수 없었다 — 당시 판단은 실제 PDF 생성기 산출물을 조사하지 않은 채 추측으로 내려진 것이었고, 이는 부적절한 근거였다. §7-4-3 원문 자체는 이력 보존을 위해 수정하지 않고 그대로 남겨 두며, 이 절이 그 정정 기록이다.
+
+### 12-3. 수정 내용
+
+`_raw_bytes_and_format`가 이제 필터 배열 **전체**를 해석한다(`_normalize_filter_names`가 단일 필터/배열/필터 없음을 항상 이름 리스트로 정규화). 마지막 필터가 완결 코덱이고 그 앞에 다른 필터가 있으면:
+
+1. 앞선 필터들이 전부 `_LEADING_FILTER_DECODERS`(ASCII85Decode/ASCIIHexDecode/FlateDecode/LZWDecode/RunLengthDecode — pypdf 표준 순수 파이썬 정적 메서드, **Pillow 미경유**, 시그니처 `decode(data, decode_parms)`를 pypdf 6.19.0 소스로 직접 확인)에 있으면, `_decode_leading_transport_filters()`가 각 필터를 실제로 디코드해 벗겨내고 그 결과를 완결 코덱의 원본 바이트로 반환한다. `/DecodeParms`는 `_normalize_decode_parms()`가 pypdf `filters.py::decode_stream_data`와 동일한 정렬 규칙(필터 배열과 같은 길이로 맞추고, 없는 자리는 빈 `DictionaryObject`)으로 정규화해 각 필터에 맞게 넘긴다.
+2. 앞선 필터 중 하나라도 이 표에 없거나(예: `/Crypt`, 알 수 없는 이름) 디코딩 자체가 예외를 던지면(손상/예상 밖 구조), **완결 코덱으로 잘못 라벨링해 반환하지 않고** `image_format="unknown"`으로 명시적으로 빠진다 — 이는 지시문이 요청한 "기존 미지원 포맷 처리 경로"로, `hwpx_writer/image_embedder.py`(unit-7, 이번에 수정하지 않음)의 `SUPPORTED_IMAGE_FORMATS` 화이트리스트가 `"unknown"`을 이미 "제외 + `IMAGE_FORMAT_UNSUPPORTED` 경고"로 처리하는 기존 배선을 그대로 재사용한다.
+
+단일 필터 케이스(1차/2차 재작업의 핵심, 06 기존 PASS 대상)는 `leading_filter_names`가 빈 리스트가 되어 이번 변경 이전과 완전히 동일한 코드 경로(`_data` 그대로 반환)를 탄다 — 회귀 없음(12-5절 로컬 확인). FlateDecode/LZWDecode/RunLengthDecode/필터 없음(DEC-028, 원시 픽셀 샘플) 경로는 애초에 `xobj.get_data()`로 필터 배열 전체를 pypdf가 표준 해석하므로 다중 필터가 있어도 이번 결함과 무관했고, 전혀 건드리지 않았다.
+
+**규칙 A 질문 발동 없음**: 이번 수정은 지시문이 제시한 두 방향(a) 실제 디코드 (b) 안전하지 않으면 기존 미지원 경로) 중 정확히 그 범위 안에서 구현했고, "어느 필터를 안전하게 해석 가능하다고 볼지"(pypdf 표준 필터 5종 화이트리스트)는 pypdf 소스로 명확히 확인 가능한 사실에 기반한 합리적 결정이라 판단해 임의 확정하고 여기 근거를 남겼다(두 갈래 설계가 갈리는 모호함이 아니었음).
+
+### 12-4. 06단계에 전달할 기존 테스트 충돌 (수정 아님, 정보 전달)
+
+`tests/pdf_reader/test_image_extractor.py::test_filter_array_last_entry_determines_format_dctdecode_case`(06 소유, 이번에 수정하지 않음)는 **2차 재작업 이전(사실상 DEF-INT-001의 버그가 있던 상태)의 동작을 "화이트박스 커버리지" 명목으로 그대로 고정한 테스트**다 — `arbitrary_bytes`(유효한 ASCII85도, JPEG도 아닌 임의 바이트)를 스트림에 넣고 `image_format == "jpeg"`, `raw_bytes == arbitrary_bytes`(전송 필터가 벗겨지지 않은 원본 그대로)를 기대한다. 이번 수정 이후 로컬로 재실행한 결과, 이 테스트는 **의도한 대로 실패한다**(`image_format == "unknown"`, arbitrary_bytes가 유효한 ASCII85가 아니라 `_decode_leading_transport_filters`가 디코드에 실패해 안전 경로로 빠짐 — 로그에도 `Ignoring missing Ascii85 end marker.` 경고가 남고 최종적으로 디코드 실패). **이는 회귀가 아니라 DEF-INT-001이 실제로 고쳐졌다는 증거**다 — 06단계가 이 테스트를 아래 12-6절 AC에 맞춰 갱신해야 한다(예: 유효한 ASCII85로 인코딩된 실제 JPEG를 써서 "정상적으로 디코드되어 `jpeg`/원본과 바이트 일치"를 검증하는 방향으로, 또는 "안전하게 디코드 불가능한 임의 바이트는 `unknown`으로 빠짐"을 검증하는 별도 화이트박스 테스트로 분리).
+
+그 외 `tests/pdf_reader/test_image_extractor.py`의 나머지 모든 테스트(322개 중 이 1건 제외 전부)는 이번 수정 이후에도 로컬 pytest 재실행에서 **전부 PASS**(12-5절).
+
+### 12-5. 게이트 1 — 정적 분석/린트 (재확인)
+
+- 프로젝트에 lint/type-check/formatter 설정 없음을 재확인(루트에 `ruff`/`flake8`/`mypy`/`pylint`/`.pre-commit-config.yaml` 없음 — 1차/2차 재작업과 동일 결론).
+- `python -m py_compile pdf_to_hwpx/pdf_reader/image_extractor.py` — 컴파일 성공.
+- **로컬 환경에 `pytest`/`reportlab`/`platformdirs`가 설치돼 있지 않아(2차 재작업 시점과 동일하게 재확인) 이번에는 실제로 `pip install`로 로컬 설치해 pytest를 직접 실행했다**(매니페스트 `pyproject.toml`은 수정하지 않음 — `platformdirs`/`reportlab`는 이미 `pyproject.toml`에 선언돼 있고 이 로컬 venv에만 없던 것이었음, `pytest`는 개발 전용 도구라 애초에 런타임 매니페스트 대상이 아님, 2차 재작업의 "로컬 확인용 설치" 선례와 동일한 성격). 이 설치로 다음을 실제로 실행해 확인할 수 있었다(2차 재작업까지는 pytest 없이 픽스처 빌더 함수만 재사용하는 간접 확인이었던 것과 달리, 이번에는 **실제 pytest 실행**):
+  - `python -m pytest tests/pdf_reader/test_image_extractor.py -q` → **322 passed, 1 failed**(실패 1건은 12-4절에서 설명한, 회귀가 아니라 결함이 실제로 고쳐졌다는 증거).
+  - `python -m pytest tests/pdf_reader tests/hwpx_writer tests/hwpx_kernel -q` → 동일하게 **322 passed, 1 failed**(다른 unit 디렉터리 회귀 없음).
+  - `python -m pytest tests/integration/test_feature_a_pipeline.py -q` → **2 passed, 1 failed**(TC-INT-002/TC-INT-004 회귀 없이 PASS 유지, DEF-INT-001 재현 테스트는 12-6절 참고 — 의도된 "예상외 통과" 실패).
+  - `tests/common/test_logging_setup.py`, `tests/core/test_orchestrator.py`는 이 로컬 venv에 `platformdirs`가 원래 없어 수집 자체가 실패했었는데(이 unit의 파일 범위와 무관한 기존 환경 문제), 로컬 확인을 위해 `pip install platformdirs`로 추가 설치한 뒤 재실행해 위 통합테스트 결과를 얻었다 — 매니페스트에는 이미 선언돼 있던 패키지라 공유 자원 변경 아님.
+- 병렬 실행이 아니므로 다른 unit과의 파일 충돌/격리 이슈 없음.
+
+### 12-6. 게이트 2 — 자체 코드 리뷰 체크리스트
+
+- [x] 설계서/디자인서 명세와 실제 구현이 일치하는가 — REQ-003(재인코딩 없는 원본 바이트)을 다중 필터 연쇄 케이스에서도 이제 정확히 만족한다(안전하게 벗겨낼 수 있으면 벗겨내고, 아니면 명시적으로 미지원 처리). 지시문이 제시한 두 방향(a)/(b) 모두 실제로 구현했다(12-3절).
+- [x] 에러 처리가 누락된 경로가 없는가 — `_decode_leading_transport_filters`의 `except Exception: return None`은 예외를 조용히 무시하는 것이 아니라, 호출자가 그 결과(`None`)를 받아 **명시적으로 `image_format="unknown"`이라는 가시적인 실패 경로**로 라우팅하도록 설계된 의도적 흐름 제어다(기존에 이미 존재하던 "미지원 포맷" 경로와 동일한 성격 — 그 이미지는 unit-7에서 제외되고 `ImageEmbedWarning`으로 사용자에게 보고된다, 조용히 사라지지 않음). `_data` 속성 부재 등 기존 `PdfReadError` 발생 지점은 변경 없이 그대로 유지했다.
+- [x] 입력값 검증이 시스템 경계에서 이루어지는가 — 변경 없음(unit-0 `loader.py`가 PDF 구조 자체는 이미 검증한 상태로 전달, 기존 전제와 동일). `/DecodeParms` 정규화는 PDF 내부 구조체이지 사용자 입력이 아니며, 없거나 형식이 다른 경우 빈 `DictionaryObject`로 안전하게 기본값 처리한다(추측성 픽셀 처리가 아니라 "파라미터 없음"이라는 PDF 표준 자체의 기본 의미와 일치).
+- [x] 하드코딩된 시크릿/자격증명이 없는가 — 없음.
+- [x] 새로 추가한 외부 의존성이 있다면 실존 패키지인지 확인했는가 — 신규 의존성 추가 없음. `pypdf.filters`의 `ASCII85Decode`/`ASCIIHexDecode`/`FlateDecode`/`LZWDecode`/`RunLengthDecode`는 이미 매니페스트에 있는 `pypdf`(unit-0이 등록) 패키지의 기존 공개 서브모듈이며, `import pypdf.filters`로 로컬에서 직접 확인했다(신규 PyPI 패키지 아님).
+- [x] 범위를 벗어난 변경이 섞여 있지 않은가 — `pdf_to_hwpx/pdf_reader/image_extractor.py` 1개 파일만 수정. DEC-028(원시 픽셀 샘플 PNG 합성) 경로, `_extract_inline_images`, bbox 폴백 로직, `_detect_image_format` 등은 문자 그대로 유지했다(코드 리뷰로 확인 가능 — 이번 diff는 임포트 3줄 추가, 상수 1개 추가, 헬퍼 함수 3개 신설, `_raw_bytes_and_format` 본문 확장, 모듈 docstring에 "3차 재작업" 절 추가뿐). `tests/integration/test_feature_a_pipeline.py`(07 소유, 지시문이 명시적으로 수정 금지)와 `tests/pdf_reader/test_image_extractor.py`(06 소유)는 손대지 않았다.
+
+### 12-7. 로컬 동작 확인 (자체 테스트 아님, 최소 확인 — 12-5절 pytest 실행과는 별개로 직접 재현)
+
+세션 스크래치 디렉터리(리포지토리 밖)에서 직접 pypdf 저수준 API로 PDF를 구성해 확인 후 스크립트/생성 파일은 리포지토리에 남기지 않았다(`git status --porcelain`으로 신규 파일이 `image_extractor.py` 1개뿐임을 재확인).
+
+1. **DEF-INT-001 재현 시나리오(핵심)**: 40x30 JPEG을 `base64.a85encode(..., adobe=True)`로 ASCII85 인코딩한 뒤 `/Filter [/ASCII85Decode /DCTDecode]`로 이미지 XObject를 구성 → `extract_image_blocks(page)[0]` 결과: `image_format == "jpeg"`, `raw_bytes == 원본 JPEG 바이트`(완전히 동일, `==` 비교로 확인), `PIL.Image.open(io.BytesIO(raw_bytes)).load()`가 예외 없이 성공(유효한 이미지로 열림) — **DEF-INT-001 해소를 직접 실증**.
+2. **회귀 확인(단일 필터)**: `/Filter /DCTDecode`(배열 아님, 필터 1개) 케이스 → `image_format == "jpeg"`, `raw_bytes == 원본 JPEG`(완전 동일) — 1차/2차 재작업 핵심 계약 그대로 유지 확인.
+3. **안전하지 않은 선행 필터 폴백 확인**: `/Filter [/Crypt /DCTDecode]`(가상의 미지원 선행 필터) 케이스 → `image_format == "unknown"`(완결 코덱으로 잘못 라벨링되지 않고 명시적으로 미지원 경로로 빠짐을 직접 확인).
+4. **07단계 통합테스트로 종단간(end-to-end) 확인**: `python -m pytest tests/integration/test_feature_a_pipeline.py -q` 실행 결과, `test_reportlab_generated_jpeg_is_silently_corrupted_in_final_hwpx_DEF_INT_001`가 **실패**했는데, 그 실패 지점은 테스트 자신의 마지막 assert(`assert is_valid_image is False, "DEF-INT-001이 수정된 것으로 보입니다 — BinData의 이미지가 이제 유효합니다. ..."`)로, 정확히 **이 테스트가 스스로 의도한 "결함이 고쳐지면 실패로 전환되는 회귀 가드"의 역할대로 동작한 것**이다 — `convert()`가 실제로 만든 `.hwpx`의 `BinData/binN.jpg`가 이제 `PIL.Image.open()`으로 정상적으로 열린다는 뜻이다(orchestrator→unit-2→unit-7→unit-4 전체 실제 파이프라인 경유, mock 없음). TC-INT-002/TC-INT-004는 그대로 PASS 유지(회귀 없음).
+5. **발견한 사소한 불일치(수정하지 않음, 07/06에 정보로만 전달)**: 위 통합테스트 함수의 docstring은 "이 테스트는 `pytest.mark.xfail(strict=True)`로 표시한다"고 서술하지만, 실제 코드에는 `@pytest.mark.xfail` 데코레이터가 없다(`grep`으로 직접 확인). 그 결과 이번처럼 결함이 고쳐지면 pytest가 "xfail이 예상외로 통과"가 아니라 그냥 **일반 FAIL**로 보고한다(실질적으로는 동일한 신호 — "고쳐졌으니 갱신 필요" — 를 CI에 전달하지만, 테스트 자체의 문서화 의도와 실제 데코레이터가 어긋나 있다). 이 파일은 07 소유라 직접 고치지 않았다 — 07 재실행 시 이 어긋남도 함께 바로잡을 것을 권장(정보 전달 목적, 이번 반려 사유와는 무관).
+
+### 12-8. 6단계 테스터를 위한 갱신된 인수 조건 (AC-1에 3-4번 항목 신설, 그 외 기존 AC 변경 없음)
+
+**AC-1(3차 개정 추가분). 다중 필터 연쇄 (REQ-003, DEF-INT-001)**
+
+1. `/DCTDecode`/`/JPXDecode`/`/CCITTFaxDecode`/`/JBIG2Decode`가 필터 배열의 **마지막**이고 그 앞에 `/ASCII85Decode`/`/ASCIIHexDecode`/`/FlateDecode`/`/LZWDecode`/`/RunLengthDecode` 중 하나 이상이 선행하는 경우, `extract_image_blocks`가 반환하는 `raw_bytes`는 **그 앞선 필터를 실제로 디코드한 뒤의 완결 코덱 원본 바이트와 바이트 단위로 완전히 동일**해야 한다(예: ASCII85로 인코딩된 JPEG는 디코드된 JPEG 원본과 동일 — `PIL.Image.open(io.BytesIO(raw_bytes)).load()`가 예외 없이 성공해야 함). `image_format`은 마지막 필터가 결정하는 값(`"jpeg"`/`"jp2"`/`"ccitt"`/`"jbig2"`) 그대로다.
+2. 위 완결 코덱 앞에 `_LEADING_FILTER_DECODERS`에 없는 필터(예: `/Crypt`, 임의의 알 수 없는 이름)가 선행하거나, 선행 필터 디코딩 자체가 실패하는 경우(예: 선언된 필터와 실제 바이트가 맞지 않는 손상된 PDF), `image_format == "unknown"`이어야 한다 — 완결 코덱 이름으로 잘못 라벨링되면 결함이다.
+3. 단일 필터(배열이 아니거나 배열 길이가 1)인 기존 케이스는 이번 변경으로 어떤 동작 변화도 없어야 한다(회귀 확인 대상, 12-7-2절).
+4. `tests/pdf_reader/test_image_extractor.py::test_filter_array_last_entry_determines_format_dctdecode_case`는 이번 수정 이후 **의도적으로 실패**한다(12-4절) — 06단계는 이를 결함으로 보고하지 말고, 위 1/2번 AC에 맞춰 테스트를 갱신할 것(예: 유효한 ASCII85 인코딩된 실제 JPEG로 교체해 "정상 디코드 후 원본과 바이트 일치"를 검증하거나, "안전하게 디코드 불가능한 임의 바이트"는 별도 테스트로 분리해 `image_format == "unknown"`을 검증).
+5. `tests/integration/test_feature_a_pipeline.py::test_reportlab_generated_jpeg_is_silently_corrupted_in_final_hwpx_DEF_INT_001`도 이번 수정 이후 **의도적으로 실패**한다(12-7-4절, 테스트 자신의 메시지가 갱신 방법을 안내함) — 07단계가 이 테스트를 뒤집고(`is_valid_image is True`), `docs/harness/decisions.md`/`feature-A-integration-test.md`를 DEF-INT-001 Closed로 갱신해야 한다(이 unit이 직접 하지 않음, 07 책임).
+
+기존 AC-1(2차 개정, 9-8절)/AC-2~AC-6은 변경 없이 그대로 유효하다.
+
+### 12-9. 인계 우선순위 (06/07단계 재검증용)
+
+1. **최우선**: 위 AC-1(3차 개정 추가분) 1~3번을 06단계가 공식 pytest로 재검증.
+2. 12-4절/AC-1-4: `test_filter_array_last_entry_determines_format_dctdecode_case`를 06단계가 새 AC에 맞춰 갱신(이 unit은 07 소유 통합테스트뿐 아니라 06 소유 단위테스트도 직접 수정하지 않았음 — 06의 책임 영역이라 판단).
+3. 06단계 재검증 통과 후, 07단계가 `tests/integration/test_feature_a_pipeline.py::test_reportlab_generated_jpeg_is_silently_corrupted_in_final_hwpx_DEF_INT_001`을 공식 재실행해 DEF-INT-001을 Closed로 전환(AC-1-5, 12-7-4/5절).
+4. **오케스트레이터에게 참고로만 전달(결정 요청 아님)**: unit-7(`image_embedder.py`)/unit-4(`container.py`)가 포맷 이름이 아니라 바이트 매직넘버(예: JPEG `FF D8 FF`)까지 검증하는 방어 계층을 추가하면 "unit-2가 놓친 새로운 필터 조합"에 대해서도 2중 방어가 되겠지만, 이번 DEF-INT-001의 근본 원인은 unit-2의 판정 로직 자체였고 이번 수정으로 이미 해소되므로 **지금 당장 필수는 아니라고 판단**했다(과설계 방지) — 이 판단에 동의하지 않으면 unit-7/4를 별도 작업 단위로 검토할 것을 제안한다(이 unit이 직접 그 파일들을 수정하지 않음, 범위 밖).

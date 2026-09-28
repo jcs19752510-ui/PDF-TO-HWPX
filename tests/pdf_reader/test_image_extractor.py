@@ -33,6 +33,7 @@ pypdf의 저수준 객체 API(`PdfWriter`+`pypdf.generic`)로 이미지 XObject/
 
 from __future__ import annotations
 
+import base64
 import io
 import tomllib
 import zlib
@@ -448,32 +449,156 @@ def test_unrecognized_filter_falls_back_to_unknown_format_and_raw_bytes():
             path.unlink()
 
 
-def test_filter_array_last_entry_determines_format_dctdecode_case():
-    """`/Filter`가 배열([/ASCII85Decode /DCTDecode] 같은 드문 연쇄 필터)일
-    때, 배열의 **마지막** 항목만으로 image_format을 결정하는 분기(내부
-    `_raw_bytes_and_format`의 ArrayObject 처리)를 화이트박스로 커버한다.
-    raw_bytes는 여전히 가공 없는 원본 스트림 그대로(전송용 필터가 벗겨지지
-    않은 상태일 수 있음, 모듈 docstring "알려진 한계" 참고 -- 이 테스트는
-    "완전한 이미지 파일"을 만드는 것이 아니라 필터 배열 처리 분기 자체를
-    검증하는 것이 목적이다)."""
-    arbitrary_bytes = b"stream bytes, still ASCII85-wrapped in this rare case"
-    path = FIXTURE_DIR / "filter_array_ascii85_dct.pdf"
+# --------------------------------------------------------------------------
+# AC-1(3차 개정 추가분, DEF-INT-001) -- 필터 배열에서 완결 코덱(DCTDecode 등)
+# 앞에 전송/범용 압축 필터가 선행하는 다중 필터 연쇄. unit-2-note.md
+# §12-8 참고. 아래 `_add_multi_filter_image_xobject`는 `_add_image_xobject`와
+# 달리 `/Filter`를 리스트로 받아 ArrayObject로 등록한다(선행 필터 유무를
+# 자유롭게 조합하기 위함).
+# --------------------------------------------------------------------------
+
+
+def _add_multi_filter_image_xobject(
+    writer: PdfWriter,
+    resources: DictionaryObject,
+    name: str,
+    data: bytes,
+    width: int,
+    height: int,
+    pdf_filters: list[str],
+) -> None:
+    image_stream = StreamObject()
+    image_stream.set_data(data)
+    image_stream[NameObject("/Type")] = NameObject("/XObject")
+    image_stream[NameObject("/Subtype")] = NameObject("/Image")
+    image_stream[NameObject("/Width")] = NumberObject(width)
+    image_stream[NameObject("/Height")] = NumberObject(height)
+    image_stream[NameObject("/ColorSpace")] = NameObject("/DeviceRGB")
+    image_stream[NameObject("/BitsPerComponent")] = NumberObject(8)
+    image_stream[NameObject("/Filter")] = ArrayObject([NameObject(f) for f in pdf_filters])
+    img_ref = writer._add_object(image_stream)
+    if "/XObject" not in resources:
+        resources[NameObject("/XObject")] = DictionaryObject()
+    resources["/XObject"][NameObject(name)] = img_ref
+
+
+def test_leading_ascii85_filter_before_dctdecode_decodes_to_original_jpeg_bytes_DEF_INT_001_resolved():
+    """[DEF-INT-001 재검증, AC-1(3차 개정 추가분) 1번] 07 통합테스트가
+    reportlab 기본 산출물(`/Filter [/ASCII85Decode /DCTDecode]`)에서
+    재현한 결함의 핵심 케이스. 유효한 ASCII85로 인코딩된 실제 JPEG를 이
+    필터 배열로 감싸면, `raw_bytes`는 ASCII85 디코드 후의 원본 JPEG
+    바이트와 바이트 단위로 완전히 동일해야 하고, `image_format=="jpeg"`
+    이며, `PIL.Image.open(...).load()`가 예외 없이 성공해야 한다(이전
+    구현은 ASCII85로 감싸인 상태 그대로를 "jpeg"라고 잘못 라벨링해
+    반환했었다 -- unit-2-note.md §12-1)."""
+    jpeg_bytes = _make_jpeg_bytes(20, 15)
+    encoded = base64.a85encode(jpeg_bytes, adobe=True)
+
+    path = FIXTURE_DIR / "leading_ascii85_dct.pdf"
+    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=200, height=200)
+        resources = _ensure_resources(page)
+        _add_multi_filter_image_xobject(
+            writer, resources, "/Im0", encoded, 20, 15, ["/ASCII85Decode", "/DCTDecode"]
+        )
+        _set_content(writer, page, "q 200 0 0 200 0 0 cm /Im0 Do Q")
+        with path.open("wb") as f:
+            writer.write(f)
+
+        block = _extract_single_block(path)
+        assert block.image_format == "jpeg"
+        assert block.raw_bytes == jpeg_bytes, "DEF-INT-001이 재발함 -- 선행 ASCII85가 벗겨지지 않음"
+        reopened = Image.open(io.BytesIO(block.raw_bytes))
+        reopened.load()  # 예외 없이 유효한 이미지로 열려야 함
+        assert reopened.size == (20, 15)
+    finally:
+        if path.exists():
+            path.unlink()
+
+
+@pytest.mark.parametrize(
+    "case_name, leading_filters, stream_bytes",
+    [
+        # `_LEADING_FILTER_DECODERS`에 없는 필터(/Crypt)가 선행 -- 추측성
+        # 처리를 하지 않고 안전하게 "unknown"으로 빠져야 한다.
+        ("unrecognized_leading_filter", ["/Crypt"], b"not decodable as crypt, arbitrary bytes"),
+        # 선언은 /ASCII85Decode지만 실제로는 유효한 ASCII85가 아닌 손상된
+        # 바이트 -- 디코딩 자체가 실패하는 경우도 동일하게 "unknown"으로
+        # 빠져야 한다(완결 코덱으로 잘못 라벨링하지 않음).
+        ("undecodable_ascii85_payload", ["/ASCII85Decode"], b"zzzzz not valid ascii85 at all !!!###"),
+    ],
+)
+def test_leading_unsafe_or_undecodable_filter_before_dctdecode_falls_back_to_unknown_format(
+    case_name, leading_filters, stream_bytes
+):
+    """[AC-1(3차 개정 추가분) 2번] 완결 코덱(DCTDecode) 앞의 선행 필터가
+    안전하게 해석 불가능(`_LEADING_FILTER_DECODERS`에 없음)하거나 디코딩
+    자체가 실패하면, `image_format`이 `"jpeg"`로 잘못 라벨링되지 않고
+    `"unknown"`으로 명시적으로 빠져야 한다(raw_bytes는 원본 그대로 보존,
+    삼켜지지 않음)."""
+    path = FIXTURE_DIR / f"leading_unsafe_{case_name}.pdf"
+    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=200, height=200)
+        resources = _ensure_resources(page)
+        _add_multi_filter_image_xobject(
+            writer, resources, "/Im0", stream_bytes, 5, 5, [*leading_filters, "/DCTDecode"]
+        )
+        _set_content(writer, page, "q 200 0 0 200 0 0 cm /Im0 Do Q")
+        with path.open("wb") as f:
+            writer.write(f)
+
+        block = _extract_single_block(path)
+        assert block.image_format == "unknown"
+        assert block.raw_bytes == stream_bytes
+    finally:
+        if path.exists():
+            path.unlink()
+
+
+def test_single_filter_dctdecode_unaffected_by_leading_filter_handling_no_regression(pdf_fixtures):
+    """[AC-1(3차 개정 추가분) 3번, 회귀 확인] 필터가 배열이 아니거나 배열
+    길이가 1인 기존 단일 필터 케이스는 이번 다중 필터 처리 추가로 어떤
+    동작 변화도 없어야 한다. `single_jpeg` 픽스처(단일 `/DCTDecode`)로
+    기존 AC-1-1/1-2가 여전히 성립함을 재확인한다(12-7-2절 자체 확인의
+    공식 재검증)."""
+    block = _extract_single_block(pdf_fixtures["single_jpeg"])
+    assert block.image_format == "jpeg"
+    assert block.raw_bytes == pdf_fixtures["jpeg_small_bytes"]
+
+
+def test_leading_flatedecode_filter_before_dctdecode_with_array_decodeparms_is_decoded():
+    """[화이트박스, 커버리지 보강] `_normalize_decode_parms`의 `/DecodeParms`가
+    간접참조(`IndirectObject`)된 `ArrayObject`인 분기까지 실제로 실행되는지
+    확인한다(FlateDecode로 압축한 JPEG를 선행 필터로 사용 -- pypdf 표준
+    FlateDecode 디코더가 Pillow 없이 zlib 압축을 해제함). `/DecodeParms`가
+    비어 있는 `DictionaryObject`라 Predictor 없이(기본값) 정상 디코드된다."""
+    jpeg_bytes = _make_jpeg_bytes(12, 9)
+    compressed = zlib.compress(jpeg_bytes)
+
+    path = FIXTURE_DIR / "leading_flate_indirect_array_decodeparms.pdf"
     FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
     try:
         writer = PdfWriter()
         page = writer.add_blank_page(width=200, height=200)
         resources = _ensure_resources(page)
         image_stream = StreamObject()
-        image_stream.set_data(arbitrary_bytes)
+        image_stream.set_data(compressed)
         image_stream[NameObject("/Type")] = NameObject("/XObject")
         image_stream[NameObject("/Subtype")] = NameObject("/Image")
-        image_stream[NameObject("/Width")] = NumberObject(5)
-        image_stream[NameObject("/Height")] = NumberObject(5)
+        image_stream[NameObject("/Width")] = NumberObject(12)
+        image_stream[NameObject("/Height")] = NumberObject(9)
         image_stream[NameObject("/ColorSpace")] = NameObject("/DeviceRGB")
         image_stream[NameObject("/BitsPerComponent")] = NumberObject(8)
         image_stream[NameObject("/Filter")] = ArrayObject(
-            [NameObject("/ASCII85Decode"), NameObject("/DCTDecode")]
+            [NameObject("/FlateDecode"), NameObject("/DCTDecode")]
         )
+        empty_parms_ref = writer._add_object(DictionaryObject())
+        parms_array_ref = writer._add_object(ArrayObject([empty_parms_ref, NullObject()]))
+        image_stream[NameObject("/DecodeParms")] = parms_array_ref
         img_ref = writer._add_object(image_stream)
         resources[NameObject("/XObject")] = DictionaryObject({NameObject("/Im0"): img_ref})
         _set_content(writer, page, "q 200 0 0 200 0 0 cm /Im0 Do Q")
@@ -482,7 +607,46 @@ def test_filter_array_last_entry_determines_format_dctdecode_case():
 
         block = _extract_single_block(path)
         assert block.image_format == "jpeg"
-        assert block.raw_bytes == arbitrary_bytes
+        assert block.raw_bytes == jpeg_bytes
+    finally:
+        if path.exists():
+            path.unlink()
+
+
+def test_leading_flatedecode_filter_before_dctdecode_with_single_dict_decodeparms_is_decoded():
+    """[화이트박스, 커버리지 보강] `/DecodeParms`가 배열이 아니라 단일
+    `DictionaryObject`로 선언된 경우(`_normalize_decode_parms`의 else 분기)도
+    올바르게 정규화되어 선행 FlateDecode가 정상적으로 벗겨지는지 확인한다."""
+    jpeg_bytes = _make_jpeg_bytes(12, 9)
+    compressed = zlib.compress(jpeg_bytes)
+
+    path = FIXTURE_DIR / "leading_flate_single_dict_decodeparms.pdf"
+    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        writer = PdfWriter()
+        page = writer.add_blank_page(width=200, height=200)
+        resources = _ensure_resources(page)
+        image_stream = StreamObject()
+        image_stream.set_data(compressed)
+        image_stream[NameObject("/Type")] = NameObject("/XObject")
+        image_stream[NameObject("/Subtype")] = NameObject("/Image")
+        image_stream[NameObject("/Width")] = NumberObject(12)
+        image_stream[NameObject("/Height")] = NumberObject(9)
+        image_stream[NameObject("/ColorSpace")] = NameObject("/DeviceRGB")
+        image_stream[NameObject("/BitsPerComponent")] = NumberObject(8)
+        image_stream[NameObject("/Filter")] = ArrayObject(
+            [NameObject("/FlateDecode"), NameObject("/DCTDecode")]
+        )
+        image_stream[NameObject("/DecodeParms")] = DictionaryObject()
+        img_ref = writer._add_object(image_stream)
+        resources[NameObject("/XObject")] = DictionaryObject({NameObject("/Im0"): img_ref})
+        _set_content(writer, page, "q 200 0 0 200 0 0 cm /Im0 Do Q")
+        with path.open("wb") as f:
+            writer.write(f)
+
+        block = _extract_single_block(path)
+        assert block.image_format == "jpeg"
+        assert block.raw_bytes == jpeg_bytes
     finally:
         if path.exists():
             path.unlink()

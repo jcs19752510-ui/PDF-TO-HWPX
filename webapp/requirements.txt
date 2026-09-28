@@ -1,0 +1,22 @@
+# unit-19가 "로컬 즉시 기동"에 필요한 최소 패키지 목록을 확정한다(unit-26이
+# 최종본을 다듬는다, 03-system-design.md §1-3 unit-26 행). 전부
+# `pip index versions <pkg>`로 PyPI에 실재하는 버전임을 직접 확인했다
+# (unit-19-note.md 게이트2 체크리스트 참고).
+
+Django==5.2.17
+
+# DB(03 §2-1, DEC-020/027) — dev는 DATABASE_URL 미설정 시 SQLite로 폴백.
+psycopg[binary]==3.2.10
+dj-database-url==2.3.0
+
+# 오브젝트 스토리지(Cloudflare R2, S3 호환) — 03 §2-1, DEC-020/027.
+# dev는 R2 자격증명 없이 로컬 FileSystemStorage로 폴백(config/settings/base.py).
+django-storages[s3]==1.14.6
+boto3==1.35.36
+
+# 배포/서빙(03 §2-1) — ASGI(uvicorn)는 사용하지 않는다.
+gunicorn==23.0.0
+whitenoise==6.8.2
+
+# 로컬 개발 편의(.env 로딩)
+python-dotenv==1.0.1

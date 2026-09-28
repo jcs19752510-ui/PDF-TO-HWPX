@@ -75,6 +75,9 @@ def _jpeg_bytes(size=(40, 30), color=(200, 50, 50)) -> bytes:
     return buf.getvalue()
 
 
+_REPORTLAB_WRAPPED_IMAGE_JPEG_BYTES = _jpeg_bytes()
+
+
 def _build_reportlab_wrapped_image_pdf(path: Path) -> None:
     """reportlab의 ``canvas.drawImage()``로 JPEG 1개를 삽입한 PDF.
 
@@ -82,11 +85,22 @@ def _build_reportlab_wrapped_image_pdf(path: Path) -> None:
     형태(전송 필터 + 완결코덱 필터 연쇄)로 감싸는 것이 관측된 기본 동작이다
     (이 파일 작성 중 직접 실측 확인 — 결코 인위적으로 지어낸 저수준 조작이
     아니라, 널리 쓰이는 PDF 생성 라이브러리의 기본 산출물임).
+
+    원본 JPEG 바이트를 모듈 상수(``_REPORTLAB_WRAPPED_IMAGE_JPEG_BYTES``)로
+    고정해, 07 재실행(2026-09-28) 시 DEF-INT-001 해소를 "열리기만 하면 됨"이
+    아니라 "최종 BinData 바이트가 원본과 바이트 단위로 완전히 동일한가"까지
+    검증할 수 있게 한다(unit-2-test.md TC-601과 동일한 엄격도).
     """
     c = canvas.Canvas(str(path), pagesize=A4)
     c.setFont("Helvetica", 12)
     c.drawString(72, 750, "Image test page")
-    c.drawImage(ImageReader(io.BytesIO(_jpeg_bytes())), 72, 600, width=40, height=30)
+    c.drawImage(
+        ImageReader(io.BytesIO(_REPORTLAB_WRAPPED_IMAGE_JPEG_BYTES)),
+        72,
+        600,
+        width=40,
+        height=30,
+    )
     c.showPage()
     c.save()
 
@@ -201,44 +215,38 @@ def merged_table_two_pages_pdf() -> Path:
 # ---------------------------------------------------------------------------
 
 
-def test_reportlab_generated_jpeg_is_silently_corrupted_in_final_hwpx_DEF_INT_001(
+def test_reportlab_generated_jpeg_no_longer_corrupted_in_final_hwpx_DEF_INT_001_resolved(
     reportlab_wrapped_image_pdf: Path,
 ) -> None:
-    """DEF-INT-001(High, 통합 시점 발견 — 규칙 F, 05단계로 피드백 필요).
+    """DEF-INT-001(High) — 07 재실행(2026-09-28), unit-2 3차 재작업 이후 Closed 확인.
 
-    근본 원인: unit-2(image_extractor.py) ``_raw_bytes_and_format``는 필터
-    배열의 **마지막** 필터가 "완결 코덱"(DCTDecode 등)이면 ``xobj._data``
-    (필터를 전혀 적용하지 않은 원본 스트림)를 그대로 반환한다. 필터가 1개뿐일
-    때는 이것이 정확히 원본 JPEG 바이트와 같지만, ``reportlab`` 같은 널리
-    쓰이는 PDF 생성 라이브러리는 이미지 XObject를 기본적으로
-    ``/Filter [/ASCII85Decode /DCTDecode]``(전송 필터 + 코덱 필터 연쇄)로
-    감싼다 — 이 경우 ``_data``는 여전히 ASCII85로 인코딩된 텍스트이지
-    JPEG 바이트가 아닌데도 ``image_format="jpeg"``로 표시된다.
+    이력: 이전 07 실행(이 테스트의 이전 이름
+    ``test_reportlab_generated_jpeg_is_silently_corrupted_in_final_hwpx_DEF_INT_001``,
+    git 이력 참고)이 unit-0~8을 monkeypatch 없이 실제 구현으로 엮어 돌린 결과,
+    ``reportlab``(널리 쓰이는 PDF 생성 라이브러리)이 기본으로 만드는
+    ``/Filter [/ASCII85Decode /DCTDecode]``(전송 필터 + 완결코덱 필터 연쇄)
+    이미지가 unit-2(``image_extractor.py``)에서 마지막 필터만 보고 완결
+    코덱으로 잘못 라벨링되어, ASCII85로 인코딩된 텍스트가 그대로 "jpeg"
+    바이트인 것처럼 unit-7 -> unit-4를 거쳐 최종 ``.hwpx``의
+    ``BinData/binN.jpg``에 손상된 채 임베딩되는 결함을 발견했다(DEF-INT-001,
+    High). 규칙 F에 따라 05단계(unit-2)로 반려했다.
 
-    unit-2 자신의 06 세션은 이 조합(다중 필터 연쇄)을 "실무에서 극히
-    드묾"으로 보고 실제 재현 테스트 없이 한계로만 기록했다
-    (unit-2-note.md §7-4-3). 그러나 이 테스트가 보여주듯 reportlab의
-    **기본 동작**이 이미 이 조건을 만족하므로 결코 드문 경우가 아니다.
+    수정: 05단계 3차 재작업(``docs/harness/units/unit-2-note.md`` §12)이
+    ``_raw_bytes_and_format``를 필터 배열 **전체**를 해석하도록 고쳐, 완결
+    코덱 앞에 선행 전송/압축 필터(ASCII85Decode 등, pypdf 표준 디코더로
+    안전하게 해석 가능한 것에 한정)가 있으면 실제로 디코드해 원본 코덱
+    바이트를 복원하고, 안전하게 해석할 수 없으면 ``image_format="unknown"``
+    (기존 미지원 포맷 경로, unit-7이 이미 제외+경고로 처리)으로 명시적으로
+    빠지도록 했다. 06단계가 신규 pytest 케이스(TC-601~607)와 뮤테이션
+    검증(TC-610, 선행 필터 디코드 로직을 되돌리면 즉시 5건 FAIL로 잡힘)으로
+    이 수정을 독립 재검증해 PASS 판정했다(``docs/harness/units/unit-2-test.md``
+    §12).
 
-    unit-7(image_embedder.py)의 ``SUPPORTED_IMAGE_FORMATS`` 화이트리스트는
-    포맷 **이름**만 보고 통과시키며 바이트 유효성을 검증하지 않고,
-    unit-4의 ``container.add_bin_data()``도 ``image_format`` 문자열만
-    검사할 뿐 실제 바이트가 그 포맷인지 확인하지 않는다(직접 소스 확인,
-    ``container.py`` 320행대). 세 unit(2/7/4) 모두 개별적으로는 자신의
-    계약을 정확히 지켰지만, "포맷 라벨이 실제 바이트 내용과 일치한다"는
-    암묵적 가정을 아무도 검증하지 않아 조합 시점에만 드러나는 결함이다.
-
-    영향: ``convert()``가 ``success=True``, ``warnings=[]``, ``errors=[]``를
-    반환하면서도 최종 `.hwpx`의 ``BinData/binN.jpg``에는 실제로 열리지 않는
-    깨진 바이트가 들어간다 — REQ-003(원본 보존)이 사실상 무의미해지고
-    REQ-005(미보존 요소 고지)도 지켜지지 않는다(사용자에게 아무 경고 없음).
-
-    이 테스트는 ``pytest.mark.xfail(strict=True)``로 표시한다 — 05단계가
-    (a) unit-2가 다중 필터 연쇄를 해석하도록 고치거나, (b) unit-7/4가
-    바이트 유효성(매직넘버)을 검증해 경고로 전환하는 방식으로 고치면 이
-    테스트가 "예상외로 통과"하게 되어 strict=True 덕분에 CI가 실패로
-    표시한다 — 수정 완료를 놓치지 않기 위한 의도적 장치다. 07단계가 직접
-    코드를 고치지 않는다(규칙 F).
+    이 07 재실행은 그 수정이 monkeypatch 없는 실제 orchestrator ->
+    unit-2 -> unit-7 -> unit-4 전체 파이프라인 경로에서도 실제로 유효한
+    이미지를 만들어내는지, 이 테스트 자신의 assert를 뒤집어 직접 재확인한다
+    (호출 프롬프트 지시대로 회귀가드 반전 작업 — 07이 코드를 직접 고치는
+    것이 아니라 결함이 해소되었다는 사실을 증거로 고정하는 것).
     """
     out = FIXTURE_DIR / "reportlab_wrapped_image.hwpx"
     result = convert(
@@ -247,7 +255,9 @@ def test_reportlab_generated_jpeg_is_silently_corrupted_in_final_hwpx_DEF_INT_00
 
     assert result.success is True
     assert result.errors == []
-    # 현재(결함 있는) 동작: 아무 경고도 없이 "성공"으로 보고된다.
+    # 수정 후에도 이 조합(다중 필터 연쇄, 완결 코덱으로 정상 복원됨) 자체는
+    # 경고 대상이 아니다 — 원본이 손상 없이 그대로 보존되었으므로
+    # ConversionWarning을 낼 이유가 없다(REQ-003 정상 충족).
     assert result.warnings == []
     assert result.stats.images_embedded == 1
 
@@ -256,23 +266,32 @@ def test_reportlab_generated_jpeg_is_silently_corrupted_in_final_hwpx_DEF_INT_00
         assert len(bin_entries) == 1
         raw = zf.read(bin_entries[0])
 
-    # 현재(결함 있는) 동작을 직접 명시적으로 확인한다: BinData에 들어간
-    # 바이트는 유효한 이미지로 열리지 않는다(ASCII85로 인코딩된 텍스트가
-    # 그대로 "jpeg"라는 라벨을 달고 들어갔기 때문). 05단계가 이 결함을
-    # 고치면(다중 필터 해석 또는 바이트 검증 도입) 아래 assert가 실패로
-    # 바뀌어 이 테스트 자체가 갱신 대상임을 즉시 알려준다 — 의도적으로
-    # "현재의 버그를 문서화"하는 회귀 가드다(규칙 F: 07단계는 코드를
-    # 직접 고치지 않고, 결함을 재현 가능한 형태로 고정해 05로 되돌린다).
+    # 수정된(정상) 동작을 직접 명시적으로 확인한다: BinData에 들어간 바이트가
+    # 이제 유효한 JPEG로 정상적으로 열린다(ASCII85 전송 필터가 실제로 벗겨져
+    # 원본 JPEG 바이트가 그대로 보존됨). 이 assert가 다시 실패하면 DEF-INT-001
+    # 유형의 회귀가 재발했다는 뜻이므로 즉시 05단계로 재반려해야 한다.
     is_valid_image = True
     try:
         Image.open(io.BytesIO(raw)).load()
     except Exception:
         is_valid_image = False
 
-    assert is_valid_image is False, (
-        "DEF-INT-001이 수정된 것으로 보입니다 — BinData의 이미지가 이제 "
-        "유효합니다. docs/harness/decisions.md와 이 테스트를 함께 갱신하고, "
-        "이 assert를 'is_valid_image is True'로 뒤집어야 합니다."
+    assert is_valid_image is True, (
+        "DEF-INT-001이 재발한 것으로 보입니다 — BinData의 이미지가 다시 "
+        "유효하지 않습니다. 규칙 F에 따라 05단계(unit-2)로 재반려하고, "
+        "이 assert를 다시 'is_valid_image is False'로 되돌리며 이 테스트/"
+        "함수명/docstring을 '결함 재현' 방향으로 갱신해야 합니다."
+    )
+
+    # 07 재실행(2026-09-28) 강화 검증: "열리기만 하면 됨"보다 엄격하게,
+    # 최종 BinData 바이트가 ASCII85 전송 필터를 실제로 벗겨낸 원본 JPEG와
+    # 바이트 단위로 완전히 동일한지까지 확인한다(unit-2-test.md TC-601과
+    # 동일한 엄격도를 통합 경로 — orchestrator->unit-2->unit-7->unit-4 —
+    # 에서도 실측 재현).
+    assert raw == _REPORTLAB_WRAPPED_IMAGE_JPEG_BYTES, (
+        "BinData 바이트가 열리기는 하지만 원본 JPEG와 바이트 단위로 "
+        "동일하지 않습니다 — 재인코딩 등 다른 경로로 REQ-003(원본 보존)이 "
+        "훼손되었을 수 있습니다."
     )
 
 

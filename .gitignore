@@ -23,3 +23,9 @@ dist/
 
 # CI 헤드리스 실행 로그 (automation/run-harness-agent.sh 산출물)
 docs/harness/_ci-logs/
+
+# webapp/(Feature B, unit-19~) — Django 로컬 개발 산출물. 실제 시크릿은
+# .env에만 있고 .env는 절대 커밋하지 않는다(webapp/.env.example만 커밋).
+webapp/.env
+webapp/.dev-media/
+webapp/staticfiles/
