@@ -36,12 +36,18 @@ import pdfplumber
 
 from pdf_to_hwpx.pdf_reader.ir import TextBlockIR
 
-# 같은 줄로 간주할 word 간 세로(top) 오차 허용치(pt). pdfplumber 좌표계는
-# 페이지 상단을 원점으로 하는 "top" 기준이며, 같은 시각적 줄이라도 폰트
-# 베이스라인 차이로 top이 미세하게 다를 수 있어 완충치를 둔다. 근거가 있는
-# 표준값은 아니며, 03단계 설계서에도 구체적 수치가 없어 합리적으로 정한
-# 휴리스틱 값이다(unit-note 명시).
-_LINE_TOLERANCE_PT = 2.5
+# 같은 줄로 간주할 word 간 세로 범위([top, bottom]) 겹침 비율 임계값.
+# (재작업 2026-09-28, DEF-001) 이전에는 "top" 값 하나만 놓고 고정 허용치
+# (2.5pt)로 비교했으나, pdfplumber의 "top"은 글자 상단(어센트 포함) 기준이라
+# 같은 베이스라인 위 단어라도 폰트 "크기"가 크게 다르면 top 차이가 커져
+# 오판정이 발생했다(예: size10/size24가 섞인 줄에서 top 차이 11.1pt >
+# 2.5pt). 대신 word의 세로 구간이 서로 얼마나 겹치는지(overlap 길이 /
+# 두 word 중 더 작은 높이)를 기준으로 판정한다 — 같은 베이스라인 위
+# 단어들은 폰트 크기가 달라도 서로의 세로 구간을 상당 부분 포함/겹치는
+# 경향이 있다(어센트가 디센트보다 커서 "bottom" 쪽 변동폭이 "top" 쪽보다
+# 작기 때문). 근거가 있는 표준값은 아니며, 03단계 설계서에도 구체적
+# 수치가 없어 합리적으로 정한 휴리스틱 값이다(unit-note 명시).
+_LINE_OVERLAP_RATIO = 0.5
 
 # pdfminer.six(pdfplumber의 파싱 엔진)는 폰트에 ToUnicode CMap이 없어
 # 문자 코드를 유니코드로 되돌릴 수 없을 때, 기본 폴백으로 "(cid:123)"
@@ -85,27 +91,65 @@ def _group_words_into_lines(words: list[dict]) -> list[list[dict]]:
     """word들을 시각적 "줄" 단위로 묶는다.
 
     pdfplumber는 라인 단위 그룹을 직접 제공하지 않으므로(``extract_words``는
-    읽기 순서로 정렬된 평평한 목록만 준다), top 좌표를 기준으로 근접한
-    word를 같은 줄로 묶는 휴리스틱을 직접 구현했다. 회전되었거나 심하게
-    기울어진 텍스트, 다단(multi-column) 레이아웃에서 같은 top대의 다른
-    컬럼 word를 한 줄로 잘못 묶을 가능성은 이 휴리스틱의 한계다(unit-note
-    명시).
+    읽기 순서로 정렬된 평평한 목록만 준다), word의 세로 구간([top, bottom])이
+    서로 충분히 겹치는지를 기준으로 같은 줄을 판정하는 휴리스틱을 직접
+    구현했다(재작업 2026-09-28, DEF-001 — ``_LINE_OVERLAP_RATIO`` 참고).
+
+    "같은 줄인지 판정"(이 함수, 세로 겹침 비율 기준)과 "줄 내부 읽기 순서
+    정렬"(``x0`` 오름차순)의 책임을 분리했다 — 이전 구현은 판정 이전에
+    이미 ``top``을 1차 정렬 키로 써서 정렬 자체가 틀어지는 문제가 있었다.
+
+    회전되었거나 심하게 기울어진 텍스트, 다단(multi-column) 레이아웃에서
+    같은 세로 구간에 있는 다른 컬럼 word를 한 줄로 잘못 묶을 가능성은
+    이 휴리스틱의 한계로 남는다(unit-note 명시, 이번 재작업 범위 아님).
     """
-    ordered = sorted(words, key=lambda w: (round(w["top"], 1), w["x0"]))
-    lines: list[list[dict]] = []
-    current_line: list[dict] = []
-    current_top: float | None = None
+    if not words:
+        return []
+
+    # 처리 순서만 top 오름차순으로 정한다(줄 클러스터를 만드는 데 필요한
+    # 스윕 순서일 뿐, 최종 읽기 순서와는 무관 -- 최종 순서는 아래에서
+    # x0/최소 top 기준으로 별도로 정렬한다).
+    ordered = sorted(words, key=lambda w: w["top"])
+
+    clusters: list[dict] = []  # {"members": list[dict], "max_bottom": float}
     for word in ordered:
-        if current_top is None or abs(word["top"] - current_top) > _LINE_TOLERANCE_PT:
-            if current_line:
-                lines.append(current_line)
-            current_line = [word]
-            current_top = word["top"]
+        w_top = word["top"]
+        w_bottom = word["bottom"]
+        w_height = max(w_bottom - w_top, 0.01)
+
+        matched_cluster = None
+        for cluster in clusters:
+            if w_top >= cluster["max_bottom"]:
+                continue  # 세로로 전혀 겹칠 수 없음(스윕 순서상 이후로도 불가)
+            if _has_vertical_overlap(word, w_height, cluster["members"]):
+                matched_cluster = cluster
+                break
+
+        if matched_cluster is None:
+            clusters.append({"members": [word], "max_bottom": w_bottom})
         else:
-            current_line.append(word)
-    if current_line:
-        lines.append(current_line)
+            matched_cluster["members"].append(word)
+            matched_cluster["max_bottom"] = max(matched_cluster["max_bottom"], w_bottom)
+
+    lines = [cluster["members"] for cluster in clusters]
+    for line in lines:
+        line.sort(key=lambda w: w["x0"])
+    lines.sort(key=lambda line: min(w["top"] for w in line))
     return lines
+
+
+def _has_vertical_overlap(word: dict, word_height: float, members: list[dict]) -> bool:
+    """``word``가 ``members`` 중 하나와 세로 구간이 충분히 겹치는지 확인한다."""
+    for member in members:
+        m_top = member["top"]
+        m_bottom = member["bottom"]
+        m_height = max(m_bottom - m_top, 0.01)
+        overlap = min(word["bottom"], m_bottom) - max(word["top"], m_top)
+        if overlap <= 0:
+            continue
+        if overlap / min(word_height, m_height) >= _LINE_OVERLAP_RATIO:
+            return True
+    return False
 
 
 def _line_words_to_blocks(line_words: list[dict]) -> list[TextBlockIR]:

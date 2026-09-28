@@ -26,6 +26,12 @@ dependencies = [
     "lxml>=5.0.0,<7.0",
     "pytesseract>=0.3.10,<1.0",
     "platformdirs>=4.0.0,<5.0",
+    # unit-2(image_extractor.py, REQ-003) 구현 중 발견: pypdf.generic._image_xobject가
+    # 무조건 `from PIL import Image`를 실행하므로, 이미지가 있는 PDF에서
+    # page.images 접근 시 Pillow가 없으면 ModuleNotFoundError가 난다. pypdf 자체
+    # 의존성 선언에는 없어(선택적 extra) 여기서 직접 명시한다(오케스트레이터가
+    # unit-2 공유문서 갱신 요청을 받아 추가, docs/harness/units/unit-2-note.md 참고).
+    "Pillow>=10.0.0,<12.0",
 ]
 
 [project.optional-dependencies]

@@ -1,255 +1,269 @@
 # 03. 시스템 설계서 (System Design) — PDF-TO-HWPX
 
 - 작성 에이전트: 03-system-designer
-- 버전: v3 (사용자 확정 답변 DEC-014/015 반영)
-- 입력: `docs/harness/02-planning.md` (v3, PASS), `docs/harness/01-trend-analysis.md`(취합본 + `_parallel/01-기술이슈.md` 조각), `docs/harness/decisions.md` DEC-001~006, `docs/harness/traceability.md`
-- **핵심 전제 재확인**: 프로젝트 루트 Glob 재스캔 결과 실제 소스코드는 여전히 없음(`.git/objects` 내용물과 `TEST`, `GIT정보 copy.MD` 등 텍스트 파일만 확인) — 02단계의 "신규 프로젝트" 판단을 그대로 승계한다. 배포형태(로컬 전용, DEC-004), 과금모델(후원, DEC-005), 공개범위(오픈소스, DEC-006)는 모두 확정 상태이므로 이 설계서는 추가 질문 없이 착수한다.
-- 이 문서의 도구 권한은 Read/Write/Grep/Glob/Bash로 제한되어 있어(에이전트 정의), 실시간 웹 조사(WebSearch/WebFetch)를 수행하지 않았다. 01단계 조사 결과에 없는 사실(예: 특정 한컴오피스 버전 번호)은 추측으로 채우지 않고 "확인 필요"로 명시했다(§8 참고).
+- 버전: **v5 (DEC-020~028 대규모 리비전 — "로컬 전용 1인 도구" → "공개 웹 변환 서비스"로 근본 전환. v4까지의 DEC-018/019(Bottle, 127.0.0.1 전용)를 전면 대체)**
+- 입력: `docs/harness/02-planning.md`(v5, PASS), `docs/harness/decisions.md` DEC-020~028(이번 리비전의 유일한 근거) + 그 이전 DEC-001~019(핵심 변환 로직 관련 결정은 그대로 승계), `docs/harness/03-system-design.md`(v4, 대체 대상), 별도 프로젝트 `C:\big21\vibe-coding\AI-AUTO-WORK`(Django 5.2.17 + Wagtail 7.4.3, Render+Neon+R2 배포 — Wagtail/blog/comments/subscribers는 참고하지 않음, DEC-026)
+- **핵심 전제(반드시 지킨 제약)**: unit-0~4(그리고 향후 unit-5~8, 15~18)가 만드는 `pdf_to_hwpx` 패키지(PDF 바이트 입력 → HWPX 바이트 출력)는 **이번 리비전으로 단 한 줄도 수정하지 않는다.** 이 설계서가 다루는 것은 오직 "그 라이브러리를 누가, 어떻게 호출하고, 그 앞뒤에 무엇을 두는가"이다 — 즉 새로운 `webapp/`(Django 프로젝트)가 `pdf_to_hwpx`를 **외부 라이브러리로 import**해서 쓰는 구조다. 02-planning.md v5 §0-3의 "unit-0~4 영향 없음 확인"을 이 설계서도 그대로 재확인한다.
+- **본 리비전에서 새로 확정한 항목**(02-planning.md v5가 명시적으로 위임, 근거와 함께 규칙 A-3 예외로 자체 결정 — 전부 `decisions.md` DEC-029~036에 기록):
+  1. TTL 구체 시간(60분)
+  2. 파일크기(50MB)/변환처리 소프트 타임아웃(5분)/이미지 디컴프레션 상한(1억2800만 픽셀)
+  3. 비동기 작업 큐 구체 기술(Celery/RQ/Redis 도입하지 않고, **인프로세스 `ThreadPoolExecutor` + Postgres 기반 Job 모델**로 확정 — 근거는 §2-1)
+  4. 레이트리밋(IP당 시간당 20회, 동시 처리 2건) 구체 방식, 캡차는 v1 보류(pre-select만, 미구현)
+  5. unit-9(net_guard) 존속 — 단, "아웃바운드 전면차단"에서 **"아웃바운드 화이트리스트(DB/스토리지 호스트만 허용)"로 역할 반전**. unit-13(Bottle 웹 UI) 폐기, unit-20(Django)이 완전 대체
+  6. 인프라 리전 — Render/Neon **Singapore 우선 검토**(확인 필요 명시, §2-3), Cloudflare R2는 지역 고정이 사실상 불가능한 서비스 특성상 위치 힌트만 지정. **결론: 어느 리전을 택해도 대한민국 내 리전이 존재하지 않으므로 국외이전 고지는 무조건 필요(§6-2)** — 이것이 이번 리비전에서 가장 중요한 확정 사실 중 하나다.
+- 이 문서의 도구 권한은 Read/Write/Grep/Glob/Bash로 제한되어 있어 실시간 웹 조사(WebSearch/WebFetch)를 수행하지 않았다. Render/Neon의 정확한 리전 목록·가격 정책처럼 실시간 확인이 필요한 사실은 "확인 필요"로 명시하고 임의로 단정하지 않았다(§2-3, §8-3).
 
 ---
 
 ## 1. 아키텍처 개요
 
-### 1-1. 설계 원칙
-- **로컬 단일 프로세스 아키텍처**: 서버/클라이언트 분리가 없다. GUI든 CLI든 하나의 파이썬 프로세스 안에서 "PDF 파싱 → 중간표현(IR) → HWPX 라이팅 → 로컬 저장"이 끝난다. 배포형태(DEC-004)가 로컬 전용으로 확정되었으므로, 이 구조는 되돌릴 필요가 없는 한 계속 유지한다.
-- **파이프라인 + 중간표현(IR) 패턴**: 01단계 기술 조사(§1 "시사점")가 지적한 대로, `pdf2docx`류가 이미 검증한 "파서 → 중간 구조(문단/표/이미지) → 타깃 포맷 라이터" 패턴을 그대로 채택한다. PDF 파서 계열과 HWPX 라이터 계열이 서로의 내부 구현을 몰라도, 공용 IR 스키마(§3)만 지키면 독립적으로 개발·교체 가능하다 — 이는 향후 "PDF 파서를 바꾼다"거나 "HWPX 라이터를 바꾼다"는 변경이 발생해도 반대편에 영향이 없게 하는 장애 격리 설계다.
-- **횡단 관심사는 진입점 1곳에서만 초기화**: 네트워크 차단(REQ-011), 로깅(REQ-019)은 GUI/CLI 두 진입점 각각에서 앱 시작 시 1회 호출하는 구조로 통일해, "이 모듈은 초기화됐는지 안 됐는지 매번 확인"하는 방식(암묵적 상태 의존)을 피한다.
-- **과설계 배제**: 실사용자 트래픽이 없는 개인용 단일 실행 도구이므로, DB·메시지 큐·마이크로서비스·인증 서버 같은 것은 도입하지 않는다(필요할 이유가 없다). 설정/이력 저장은 로컬 JSON 파일 하나로 충분하다(§3).
+### 1-1. 설계 원칙 (v4 대비 무엇이 유지되고 무엇이 바뀌는가)
+
+- **"라이브러리 vs 서비스" 경계를 명확히 분리한다.** `pdf_to_hwpx`(파이썬 패키지, 저장소 루트)는 입출력이 순수 바이트(파일 경로/바이트열)인 **상태 없는 변환 라이브러리**로 그대로 둔다. `webapp/`(신규 Django 프로젝트, 별도 디렉터리)이 이 라이브러리를 호출하는 **상태 있는 서비스**다. 이 경계 덕분에 (a) 핵심 변환 로직 팀(unit-0~8 등)과 웹 서비스 팀(unit-19~26)이 서로의 파일을 건드리지 않고 병행 개발할 수 있고, (b) 배포 형태가 또 바뀌어도(예: 나중에 데스크톱판을 재출시) 라이브러리는 그대로 재사용 가능하다 — v4의 "파이프라인+IR 패턴으로 파서/라이터를 서로 격리한다"는 장애 격리 철학을 한 단계 더 큰 스케일(서비스 vs 라이브러리)로 반복 적용한 것뿐이다.
+- **과설계 배제 원칙은 이번에도 유지하되, 기준선이 바뀌었다.** v4는 "실사용자 트래픽이 없는 개인용 도구"를 전제로 DB/큐를 배제했다. v5는 "불특정 다수가 동시에 쓸 수 있는 공개 서비스"가 전제이므로 DB(Neon)와 비동기 처리(작업 큐 성격의 컴포넌트)는 이제 **필요한 것**이다. 그러나 그 안에서도 "지금 필요한 것"(Postgres 1개, 인프로세스 스레드풀)과 "나중에 필요할 수도 있는 것"(Redis 브로커, 별도 워커 프로세스, 프로세스 격리 실행)을 구분해 후자를 지금 비용으로 지불하지 않는다(근거는 §2-1).
+- **횡단 관심사 초기화 지점이 CLI/웹 두 곳으로 나뉜다.** `pdf_to_hwpx.common.logging_setup.install()`(파일 기반 로테이팅 로그)은 **CLI 진입점(unit-11)에서만** 호출한다. Django(웹) 진입점은 이 함수를 호출하지 않고 **Django 표준 로깅(stdout)**에 위임한다(§7-1) — 컨테이너 파일시스템은 재시작 시 사라지므로 로컬 파일 로그는 웹 배포에서 의미가 없고, Render는 표준출력만 수집한다. 이 분기 자체가 "어떤 진입점이 무엇을 초기화하는가"를 명시적으로 정의한 설계 결정이다(v4 §1-1 "초기화는 진입점 1곳" 원칙의 자연스러운 확장 — "진입점이 이제 2종류이므로 각자 다른 관심사를 초기화한다"로 구체화).
+- **오케스트레이션 API 계약(§4-1, §4-2)은 바뀌지 않는다.** `pdf_to_hwpx.core.orchestrator.convert(input_path, output_path, options) -> ConversionResult`, `ConversionOptions`, `ProgressEvent`, 예외 계층은 v4 §3~§4에서 이미 확정했고 아직 unit-8이 Not Started라 구현 비용도 없다. 이번 리비전은 "누가 이 함수를 어떤 스레드에서, 어떤 상태 저장소로 호출하는가"만 바꾼다.
 
 ### 1-2. 컴포넌트/모듈 경계 다이어그램
 
 ```mermaid
 flowchart TD
-    subgraph Entry["진입점 (unit-11 / unit-13)"]
-        CLI["CLI (cli/__main__.py)"]
-        GUI["GUI (gui/app.py)"]
+    USER["사용자 브라우저(불특정 다수, 전세계 어디서나)"]
+
+    subgraph Edge["Render 플랫폼 경계"]
+        DJ["Django 웹 프로세스(gunicorn, --workers 1 --threads 4)<br/>webapp/"]
+        EXE["ThreadPoolExecutor(max_workers=2)<br/>converter/executor.py — unit-21"]
     end
 
-    subgraph Cross["횡단 관심사 (unit-0 확장 / unit-9)"]
-        LOG["logging_setup.py<br/>(로컬 로거 초기화)"]
-        NET["net_guard.py<br/>(아웃바운드 소켓 차단)"]
+    USER -- "HTTPS(공개 도메인)" --> DJ
+
+    subgraph ConverterApp["converter 앱 (unit-19~24)"]
+        VIEWS["views.py: GET / , POST /convert,<br/>GET /api/jobs/&lt;job_id&gt;/, GET /download/&lt;job_id&gt;/"]
+        MODEL["models.py: ConversionJob (unit-19 공통선행 산출물)"]
+        RL["ratelimit.py(unit-23)"]
+        LIM["limits.py(unit-24) — 업로드크기/타임아웃/픽셀상한"]
+        STORE["storage.py — R2 업로드/다운로드/삭제(django-storages)"]
+        CLEAN["cleanup.py(unit-22) — TTL lazy sweep"]
     end
 
-    subgraph Reader["PDF 판독 계열 (Feature A 전반부)"]
-        LOADER["pdf_loader.py (unit-0)"]
-        TEXT["text_extractor.py (unit-1)"]
-        IMG["image_extractor.py (unit-2)"]
-        TBL["table_recognizer.py (unit-3)"]
-        HANGUL["hangul_normalizer.py (unit-15)"]
-        FORMULA["formula_approximator.py (unit-16)"]
-        OCR["ocr_engine.py (unit-12)"]
+    subgraph CoreApp["core 앱 (unit-19 확장)"]
+        MWX["config/middleware.py: XForwardedForMiddleware(AI-AUTO-WORK 원본 그대로 재사용, production 전용 등록)"]
+        MW["core/middleware.py: ContentLengthLimitMiddleware(신규)"]
+        NETG["net_guard.py(unit-9, 역할반전) — 아웃바운드 allowlist(DB/R2 호스트만 허용)"]
+        HZ["GET /healthz"]
     end
 
-    subgraph Writer["HWPX 라이팅 계열 (Feature A 후반부)"]
-        SCHEMA["hwpx_kernel/schema.py<br/>(공용 IR↔XML 프래그먼트 계약, unit-4)"]
-        CONTAINER["hwpx_kernel/container.py<br/>(zip 골격/필수 파트, unit-4)"]
-        PARA["paragraph_builder.py (unit-5)"]
-        TABLEB["table_builder.py (unit-6)"]
-        IMGB["image_embedder.py (unit-7)"]
+    subgraph LegalApp["legal 앱 (unit-25)"]
+        PRIV["개인정보처리방침 정적 뷰"]
     end
 
-    subgraph Core["오케스트레이션 (unit-8)"]
-        ORCH["orchestrator.py<br/>(우선순위 정책/예외→메시지 매핑/저장)"]
-        REPORT["quality_report.py (unit-14)"]
+    DJ --> VIEWS
+    VIEWS --> RL
+    VIEWS --> LIM
+    VIEWS --> MODEL
+    VIEWS -- "제출만, 블로킹 없음" --> EXE
+    EXE -- "라이브러리 함수 호출(같은 프로세스 안)" --> LIB
+
+    subgraph LIB["pdf_to_hwpx 패키지 (수정 없음, unit-0~8/12/15~18)"]
+        ORCH["core/orchestrator.py (unit-8)<br/>convert(input_path, output_path, options)"]
+        REST["pdf_reader/*, hwpx_kernel/*, hwpx_writer/* (unit-0~7,12,15,16)"]
     end
 
-    CLI --> NET
-    GUI --> NET
-    NET --> LOG
-    CLI --> ORCH
-    GUI --> ORCH
+    ORCH --> REST
+    EXE -- "진행률/결과를 DB 행에 기록" --> MODEL
+    VIEWS -- "폴링 응답은 DB에서만 읽음" --> MODEL
+    STORE -- "boto3/django-storages" --> R2["Cloudflare R2<br/>(전용 신규 버킷, DEC-027)"]
+    MODEL -- "psycopg" --> NEON["Neon Postgres<br/>(전용 신규 프로젝트, DEC-027)"]
+    CLEAN --> STORE
+    CLEAN --> MODEL
+    DJ -.-> NETG
+    NETG -. "허용" .-> R2
+    NETG -. "허용" .-> NEON
+    NETG -. "차단" .-> ANY["그 외 모든 아웃바운드 목적지<br/>(클라우드 LLM/OCR SaaS 등)"]
 
-    ORCH --> LOADER
-    LOADER --> TEXT
-    LOADER --> IMG
-    LOADER --> TBL
-    TEXT --> HANGUL
-    IMG -.->|수식 후보 bbox| FORMULA
-    TBL -.->|비-표 영역 후보| FORMULA
-    TEXT -.->|스캔본(텍스트 0)| OCR
-
-    CONTAINER --> SCHEMA
-    HANGUL --> PARA
-    TBL --> TABLEB
-    IMG --> IMGB
-    FORMULA -.->|근사 실패시 이미지 대체| IMGB
-    SCHEMA -.->|계약| PARA
-    SCHEMA -.->|계약| TABLEB
-    SCHEMA -.->|계약| IMGB
-
-    PARA --> ORCH
-    TABLEB --> ORCH
-    IMGB --> ORCH
-    ORCH --> CONTAINER
-    ORCH --> REPORT
-    ORCH --> LOG
+    DJ --> LegalApp
+    DJ --> CoreApp
 ```
 
-- **읽는 법**: 실선은 데이터가 실제로 흐르는 의존, 점선은 조건부/보조 관계다. `orchestrator.py`가 유일하게 "PDF 판독 계열"과 "HWPX 라이팅 계열" 양쪽을 알고 통합하는 지점이며, 두 계열은 서로를 직접 알지 못한다(장애 격리: 라이터 쪽 버그가 파서 쪽 코드를 오염시키지 않는다).
-- `hwpx_kernel/schema.py`는 "코드"가 아니라 **계약(인터페이스)**이다 — 문단/표/이미지 빌더가 각각 만들어내는 XML 프래그먼트의 형태를 고정해 두어, `paragraph_builder.py`/`table_builder.py`/`image_embedder.py`가 서로 다른 개발자(또는 병렬 작업단위)가 동시에 작업해도 파일이 겹치지 않게 한다(1-3절 참고).
+- **읽는 법**: `EXE`(스레드풀)가 `pdf_to_hwpx`를 직접 함수 호출하는 유일한 지점이다 — HTTP 요청 스레드(`VIEWS`)는 파일을 R2에 올리고 DB 행을 만든 뒤 `EXE.submit(...)`으로 즉시 반환하며, 실제 변환은 절대 요청-응답 스레드 안에서 실행되지 않는다(REQ-027).
+- **`LIB` 서브그래프는 이 설계서의 변경 대상이 아니다** — v4 §1-2/§3/§4-1/§4-2가 이미 정의했고, 05/06단계가 별도로 구현·검증 중이다. 이 다이어그램에 다시 그린 이유는 "웹 서비스가 이 라이브러리의 무엇을 어떻게 소비하는지" 경계를 명시하기 위함이지, 내부를 재설계하기 위함이 아니다.
+- `NETG`(net_guard, unit-9)는 **역할이 반전**됐다(v4: 아웃바운드 전면 차단 → v5: 아웃바운드 화이트리스트). 이유와 구현은 §6-3.
 
-### 1-3. 작업 단위 확정표 (02단계 §9 후보표 검증·확정)
+### 1-3. 작업 단위 확정표 (02단계 §9 후보표 검증·확정 — v5)
 
-> 02단계 §9는 "불확실(3단계 확정 필요)"로 남긴 칸이 많았다. 아래 표는 그 칸을 모두 채우고, 실제 파일 경로를 구체화했다. 02 대비 달라진 점(파일 분리로 공유자원 문제를 해소한 unit-15/16, 로거를 unit-0으로 승격한 것 등)은 "비고"에 표시하고 8절에서 사유를 다시 설명한다.
+> 02단계 §9-1(unit-0~18)의 "불확실" 칸은 **핵심 변환 로직(unit-0~8, 10~12, 14~18) 범위에서는 v4가 이미 확정**했고 이번 리비전으로 변경되지 않는다(v4 §1-3 그대로 유효, 재수록하지 않는다 — 변경 없는 표를 다시 베끼는 것은 문서 중복이므로 v4 원본을 참고). 이 절은 **02 §9-1의 v5 비고가 붙은 unit(9, 11, 13, 18)**과 **02 §9-2의 unit-19~26(신규)**만 다룬다.
 
-**패키지 레이아웃(확정)**:
+**패키지 레이아웃(확정, v5 신규)**:
 ```
-pdf_to_hwpx/
-  common/            logging_setup.py, exceptions.py, constants.py   (unit-0 확장, unit-18 상수)
-  pdf_reader/        loader.py, text_extractor.py, image_extractor.py,
-                     table_recognizer.py, hangul_normalizer.py,
-                     formula_approximator.py, ocr_engine.py           (unit-0~3, 12, 15, 16)
-  hwpx_kernel/       schema.py, container.py                          (unit-4)
-  hwpx_writer/       paragraph_builder.py, table_builder.py,
-                     image_embedder.py                                 (unit-5, 6, 7)
-  core/              orchestrator.py, net_guard.py, quality_report.py  (unit-8, 9, 14)
-  cli/               __main__.py                                      (unit-11)
-  gui/               app.py                                           (unit-13, 18 삽입지점)
-  LICENSE, NOTICE, THIRD_PARTY_LICENSES.md                             (unit-10)
+(저장소 루트)
+  pdf_to_hwpx/            # 기존 라이브러리 패키지 — 이번 리비전에서 내부 파일 변경 없음
+  pyproject.toml          # 기존 그대로. webapp이 이 패키지를 editable install로 의존
+  webapp/                 # 신규 Django 프로젝트 루트(AI-AUTO-WORK의 webapp/ 배치 관례 재사용)
+    manage.py
+    build.sh              # pip install -e .. (pdf_to_hwpx 편집설치) -> pip install -r requirements.txt
+                           # -> collectstatic -> migrate -> ensure_superuser(관리자 부트스트랩, AI-AUTO-WORK 패턴)
+    requirements.txt
+    render.yaml            # rootDir: webapp (AI-AUTO-WORK 패턴 그대로)
+    .env.example
+    config/
+      settings/{base,dev,production}.py
+      urls.py, wsgi.py     # ASGI 미사용(§2-1 근거) — wsgi.py만 사용
+    core/                  # 앱: 횡단 관심사(AI-AUTO-WORK core 앱 패턴 재사용)
+      middleware.py, net_guard.py, admin_auth.py, views.py(healthz), urls.py
+    converter/             # 앱: 이 서비스의 핵심 기능
+      models.py            # ConversionJob (unit-19가 정의하는 공유 계약)
+      views.py, executor.py, storage.py, ratelimit.py, limits.py, cleanup.py
+      templates/converter/*.html
+      static/converter/*.js
+    legal/                 # 앱: 개인정보처리방침(정적 뷰, Wagtail 없음 — DEC-026)
+      views.py, templates/legal/*.html
 ```
 
-| 단위ID | 소속 | 커버 REQ-ID | 선행 단위 | 확정 파일 범위 | 공유 자원 접촉(확정) | 병렬 가능(확정) | 02 대비 비고 |
+| 단위ID | 소속 | 커버 REQ-ID | 선행 단위 | 확정 파일 범위 | 공유 자원 접촉(확정) | 병렬 가능(확정) | v4/02 대비 비고 |
 |---|---|---|---|---|---|---|---|
-| **unit-0(확장)** | 공통 선행 | REQ-001, REQ-019(기반) | 없음 | `common/logging_setup.py`, `common/exceptions.py`, `pdf_reader/loader.py` | 없음(신규) — 단, 사실상 **모든 unit이 이 모듈을 import해서 소비**하므로 실질적 공통 선행 단위 | 불가(공통 선행, 최우선 착수) | **변경**: 02의 unit-0(PDF 로더만)에 로컬 로거·공통 예외 클래스를 편입해 범위를 넓혔다. 이유는 8절 |
-| unit-1 | Feature A | REQ-002, REQ-006(적용대상), REQ-007 | unit-0 | `pdf_reader/text_extractor.py` | unit-0의 `PdfDocument` 객체(읽기 전용 소비) | 가능(확정) — unit-2·3과 다른 파일 | 확정(02와 동일) |
-| unit-2 | Feature A | REQ-003 | unit-0 | `pdf_reader/image_extractor.py` | 동일 | 가능(확정) | 확정 |
-| unit-3 | Feature A | REQ-004 | unit-0 | `pdf_reader/table_recognizer.py` | 동일 | 가능(확정) | 확정 |
-| **unit-4** | Feature A | REQ-008 | 없음 | `hwpx_kernel/container.py`(zip 골격/필수 파트), `hwpx_kernel/schema.py`(문단·표·이미지 XML 프래그먼트 공용 계약) | 없음(신규) — 산출물 자체가 unit-5/6/7의 **공유 계약**이 됨 | 가능(확정, unit-0~3와 입력 무관) — 단 **unit-5/6/7의 공통 선행 단위**로 반드시 먼저 완료 | 02와 동일 역할, 범위에 `schema.py`(공용 계약) 명시 추가 |
-| unit-5 | Feature A | REQ-002, REQ-006, REQ-008 | unit-1(또는 unit-15), unit-4 | `hwpx_writer/paragraph_builder.py` | `hwpx_kernel.schema`의 계약을 **소비만** 함(파일 비접촉) | 가능(확정) — unit-6·7과 파일 분리, 공유 계약은 데이터 의존이지 파일 의존이 아님 | **불확실 해소**: 02가 우려한 "공용 유틸 공유"는 계약(인터페이스)만 공유하고 실제 XML 트리 조작은 unit-8에서 순차 통합하므로 병렬 저해 없음 |
-| unit-6 | Feature A | REQ-004 | unit-3, unit-4 | `hwpx_writer/table_builder.py` | 동일 | 가능(확정) | 동일 사유로 해소 |
-| unit-7 | Feature A | REQ-003 | unit-2, unit-4 | `hwpx_writer/image_embedder.py` | 동일 | 가능(확정) | 동일 사유로 해소 |
-| unit-8 | Feature A | REQ-005, REQ-009, REQ-010 | unit-5, unit-6, unit-7 | `core/orchestrator.py` | **실제 통합 지점**: `hwpx_kernel.container`의 문서 트리에 5/6/7 결과를 순차 삽입 — 이 지점 자체가 설계상 유일한 통합점이므로 "공유 자원 충돌"이 아니라 "의도된 배리어" | 불가(확정) — 선행 3개 단위 완료 후 착수(02와 동일 판단 유지) | 확정 |
-| unit-9 | Feature A(횡단) | REQ-011 | unit-0 | `core/net_guard.py` | 모듈 자체는 독립. 단 GUI(unit-13)·CLI(unit-11) 진입점 파일에 `net_guard.install()` 1줄 호출 삽입 필요(경미한 접촉, 각자 자기 소유 파일 수정이라 충돌 아님) | 가능(확정) | **불확실 해소**: "전역 설정 레지스트리" 우려 대신 진입점 1회 호출 구조로 단순화해 공유자원 문제 제거 |
-| unit-10 | Feature A | REQ-012 | 없음 | `LICENSE`, `NOTICE`, `THIRD_PARTY_LICENSES.md` | 없음(문서) | 가능(확정) | 확정 |
-| unit-11 | Feature B | REQ-013 | unit-8 | `cli/__main__.py` | `orchestrator.convert()` 공개 API를 읽기 전용 소비 | 가능(확정) — unit-13과 진입점 파일 분리 | **불확실 해소** |
-| unit-12 | Feature B | REQ-014 | unit-1 | `pdf_reader/ocr_engine.py` | unit-1의 IR 출력 스키마를 소비(스캔본 페이지에 대해서만 대체 텍스트 소스로 사용) | 가능(확정) — 별도 파일 | **불확실 해소** |
-| unit-13 | Feature B | REQ-015 | unit-8 | `gui/app.py` | `orchestrator.convert()` 공개 API 소비 + `ConversionOptions.progress_callback` 구현 | 가능(확정) | **불확실 해소**. 배포형태 확정(DEC-004)으로 착수 보류 사유는 이미 02에서 소멸 |
-| unit-14 | Feature B | REQ-016 | unit-8 | `core/quality_report.py` | unit-8이 만드는 `ConversionResult.warnings` 스키마 소비 | 가능(확정) — 단 unit-8의 출력 스키마(§3/§4)가 선행 확정되어 있어야 함(이미 본 설계서에서 확정) | **불확실 해소** |
-| unit-15 | Feature B | REQ-017 | unit-1 | **신규 별도 파일** `pdf_reader/hangul_normalizer.py` (unit-1/5를 직접 수정하지 않음) | unit-1의 텍스트 출력을 입력으로 받아 정규화된 텍스트를 unit-5에 넘기는 **파이프라인 후처리 단계**로 재설계 | 가능(확정) | **02 대비 변경(중요)**: 02는 "기존 unit-1/5 수정"으로 정의해 파일 충돌 우려가 있었다. 본 설계는 별도 후처리 모듈로 분리해 병렬 가능하게 만들었다 — 8절에 사유 기재 |
-| unit-16 | Feature B | REQ-018 | unit-2, unit-3 | **신규 별도 파일** `pdf_reader/formula_approximator.py` (unit-3/6을 직접 수정하지 않음) | unit-2(이미지 bbox)·unit-3(비-표 영역)의 출력을 소비, 실패 시 unit-7(이미지 임베딩) 경로로 폴백 | 가능(확정) | **02 대비 변경(중요)**: 위와 동일 사유로 별도 모듈 분리 |
-| unit-17 | Feature B | REQ-019 | unit-0(로거 기반) | `common/logging_setup.py`의 정책 확장(어떤 이벤트를 INFO/WARNING/ERROR로 남길지, 개인정보 미포함 규칙) | unit-0 로거 설정을 확장 소비 | 가능(확정) | **범위 축소**: 로거 "생성" 자체는 unit-0으로 이관되어, unit-17은 "정책"만 다룸 |
-| unit-18 | Feature B | REQ-025 | unit-11, unit-13, unit-10 | 신규: `common/constants.py`(SPONSOR_URL 등 상수). 삽입: `gui/app.py`, `cli/__main__.py`, `README.md` | **파일 접촉 있음(확정)** — GUI/CLI 진입점 파일에 문구·버튼을 삽입해야 함 | **불가(확정, 02와 다름)** — unit-11/13이 자기 파일의 골격을 먼저 완성한 뒤, unit-18이 이어서 같은 파일에 최소 삽입을 하는 **순차 배치**로 확정. 동일 파일을 동시에 건드리는 병렬 조합은 금지 | **불확실 해소, 병렬 가능 → 불가로 정정**: 02는 "가능(추정)"이었으나, 실제로는 GUI/CLI 파일을 공유 접촉하므로 순차가 맞다 |
+| **unit-19** | C. 웹 서비스 인프라 | REQ-021 | 없음 | `webapp/manage.py`, `webapp/config/settings/*.py`, `webapp/config/urls.py`, `webapp/config/wsgi.py`, **`webapp/config/middleware.py`(`XForwardedForMiddleware` — AI-AUTO-WORK `config/middleware.py` 원본 그대로 재사용, rightmost X-Forwarded-For 값을 `REMOTE_ADDR`로 재설정, production 설정에서만 등록)**, `webapp/core/apps.py`, **`webapp/converter/models.py`(ConversionJob 모델 + 최초 마이그레이션)** | 전역 settings/urls 레지스트리 + **ConversionJob 스키마(unit-20/21/22/24가 전부 이 모델을 소비)** | 불가 — unit-20~26의 공통 선행 | **02 대비 확정**: 02가 "job 상태 데이터 모델 공유 가능성으로 불확실"이라 남긴 unit-20/21 문제를 해소하기 위해, **DEC-016(unit-0 착수 전 `ir.py`를 오케스트레이터가 먼저 만든 선례)과 동일한 방식**으로 `ConversionJob` 모델을 unit-19(공통 선행)의 산출물로 명시 확정했다. unit-20/21/22/24는 이 모델을 소비만 하고 재정의하지 않는다(§3-2 스키마 참고) |
+| unit-20 | C | REQ-001, REQ-010, REQ-015 | unit-19 | `converter/views.py`(`GET /`, `POST /convert`, `GET /download/<job_id>/`), `converter/templates/converter/*.html`, `converter/static/converter/app.js` | `ConversionJob` 모델을 소비(스키마는 unit-19 고정), `executor.submit_job()` 함수 시그니처를 **호출**(구현은 unit-21) | **가능(확정)** — unit-19가 모델과 `executor.submit_job(job_id) -> None` 시그니처를 먼저 고정하면, unit-20(뷰)과 unit-21(실행기)은 서로 다른 파일이라 병렬 개발 가능(§4-1에서 이 시그니처를 고정) | 02의 "webui/app.py"(Bottle, unit-13)를 완전히 대체. **02 대비 확정**: 불확실 해소 |
+| unit-21 | C | REQ-027 | unit-19 | `converter/executor.py`(ThreadPoolExecutor 싱글톤, `pdf_to_hwpx.core.orchestrator.convert()` 직접 호출) | `ConversionJob` 모델(진행률/결과 기록), `pdf_to_hwpx` 라이브러리(import만, 수정 없음) | **가능(확정, unit-20과 동일 사유)** | 02가 "Celery/RQ 등"으로 열어둔 항목을 **인프로세스 ThreadPoolExecutor로 확정**(DEC-031, §2-1) — 별도 브로커/워커 프로세스 불필요 |
+| unit-22 | C | REQ-028 | unit-19, **unit-20/21의 인터페이스 계약(파일범위 아님)** | `converter/cleanup.py`(TTL lazy sweep), R2 lifecycle 정책 문서화(`webapp/render.yaml` 주석 또는 별도 설정 안내) | `ConversionJob` 모델 + `storage.py`의 `delete_job_objects(job)` 함수 시그니처 | **가능(조건부)** — 02는 "불가(통합단계)"로 봤으나, `ConversionJob` 스키마와 `storage.delete_job_objects()` 시그니처가 unit-19/20에서 먼저 고정되면 unit-22는 그 계약에 대해 목(mock)으로 병렬 작성 가능. 다만 **실제 통합 검증(진짜로 다 지워지는지)은 unit-20/21 완료 후 재실행 필요** — 이 점은 02 판단과 사실상 같은 결론(계약은 병렬, 검증은 순차) | **02 대비 정정**: "불가"→"가능(조건부, 검증은 순차)"로 세분화 |
+| unit-23 | C | REQ-026 | unit-19 | `converter/ratelimit.py`(IP 기반 LocMemCache 카운터, `admin_auth.py` 패턴 재사용), `converter/views.py`의 데코레이터 삽입 지점(1줄) | `views.py`에 데코레이터 1줄 삽입(자기 소유 파일 아님, unit-20과 최소 접촉 — unit-18(net_guard 1줄 호출)과 동일 패턴), **`config/middleware.py`(unit-19)가 정규화한 `request.META['REMOTE_ADDR']`을 읽기 전용으로 신뢰(파일 접촉 아님 — 단 이 정규화가 없으면 Render 프록시 뒤에서 모든 사용자가 동일한 프록시 IP로 잡혀 레이트리밋이 사실상 무력화된다, §6-4)** | 가능(확정) | 02와 동일 결론 |
+| unit-24 | C | REQ-029 | unit-19 | `converter/limits.py`(상수+검증), `core/middleware.py`의 `ContentLengthLimitMiddleware`(신규 클래스, 파일은 `core` 앱 소유이나 unit-19 완료 후 추가) | 미들웨어 스택(순서 의존, §6-3), Pillow 전역 설정(`PIL.Image.MAX_IMAGE_PIXELS`, entry point에서 1회 설정) | 가능(확정) — 02가 "불확실(unit-20/21 흡수 가능성)"로 남겼던 것을 **별도 파일(`limits.py`)로 확정 분리**, 값 참조만 하고 로직은 흡수되지 않음 | **02 대비 확정**: 불확실 해소, 별도 모듈 유지가 단일 책임 원칙에 부합한다고 판단 |
+| unit-25 | C | REQ-030 | unit-19 | `legal/views.py`, `legal/templates/legal/privacy.html` | 없음 | 가능(확정) | 02와 동일. Wagtail 미사용(DEC-026), 순수 Django 템플릿 뷰 |
+| unit-26 | C | REQ-021(배포 인프라) | unit-19, (실질적으로는 전체 unit의 요구사항을 반영해야 완성) | `webapp/render.yaml`, `webapp/.env.example`, `webapp/build.sh`, `webapp/requirements.txt` | 배포 매니페스트·환경변수 레지스트리(전역) | 불확실(확정 불가, 02와 동일 결론 유지) — 다른 모든 unit의 실제 환경변수 요구사항이 확정되어야 완성되는 통합적 성격이라 항상 마지막 웨이브 배치 | 02와 동일 |
+| **unit-9(역할 반전)** | 횡단 | REQ-011(부분) | unit-19 | `core/net_guard.py`(신규 파일 — 기존 v4가 상정한 `core/net_guard.py`와 이름은 같으나 **완전히 새로 작성**, 코드 재사용 없음. 애초에 unit-9는 Not Started였으므로 재작업 비용 없음) | 진입점(`config/wsgi.py`) 1줄 호출 | 가능(확정) | **DEC-033**: "아웃바운드 소켓 전면 차단"(v4)에서 "아웃바운드 화이트리스트(Neon 호스트 + R2 엔드포인트 호스트만 허용, 그 외 전부 `NetworkAccessBlockedError`)"로 역할 반전. 인바운드 127.0.0.1 고정 바인딩 항목은 **완전 폐기**(공개 서비스는 반드시 `0.0.0.0:$PORT`에 바인딩해야 하므로 이 방어 자체가 성립 불가 — Render가 TLS 종단·라우팅을 담당) |
+| **unit-13(폐기)** | — | REQ-015 | — | 없음(폐기) | 없음 | 해당없음 | **DEC-034**: Bottle 기반 `webui/app.py`는 unit-13으로 착수된 적이 없으므로(Not Started) 폐기에 따른 재작업 비용이 0이다. REQ-015는 이제 전적으로 unit-20이 담당한다. 이 번호는 앞으로 사용하지 않는다(결번으로 유지, 이력 추적용) |
+| unit-11(비고만 갱신) | Feature B | REQ-013 | unit-8 | `cli/__main__.py` — **파일 범위 변경 없음** | 변경 없음 | 변경 없음 | v5에서 로깅 초기화 호출(`logging_setup.install()`)이 CLI 전용임을 재확인(§1-1). 사용주체는 운영자/개발자(02 A-15) |
+| unit-18(비고만 갱신) | Feature B | REQ-025 | unit-11, **unit-20**, unit-10 | 삽입 지점이 `webui/templates/index.html`(폐기)에서 **`converter/templates/converter/index.html`(unit-20 소유 파일)**로 이동 | unit-20 파일에 순차 접촉(v4와 동일 패턴 유지) | 불가(v4와 동일, 순차) | 파일 경로만 갱신, 성격(정적 `<a>` 태그, 결제 미연동) 변경 없음 |
 
-**공유 파일/공통 선행 요약**:
-- 모든 unit이 공통으로 의존하는 파일: `common/logging_setup.py`, `common/exceptions.py` (unit-0 확장 산출물) — 이것이 이 프로젝트의 **공통 선행 unit-0**이다. 오케스트레이터는 unit-0을 최우선 웨이브에 단독 배치해야 한다.
-- 두 번째 공통 선행: `hwpx_kernel/schema.py`, `hwpx_kernel/container.py` (unit-4) — unit-5/6/7 착수 전 반드시 완료.
-- 명시적으로 동시 수정 금지(같은 파일 동시 접촉) 조합: (unit-11, unit-18), (unit-13, unit-18) — 순차 배치.
-- 그 외 unit-1/2/3, unit-5/6/7, unit-11/12/13/14/17/18(선행 완료 후)은 서로 다른 파일을 다루므로 병렬 웨이브 구성이 가능하다(ORCHESTRATOR.md P1 기준 최대 4개 동시 실행 상한 적용).
+**공유 파일/공통 선행 요약(v5)**:
+- **unit-19가 이번 리비전의 "공통 선행 unit-0"에 해당** — `webapp/config/settings/*.py`, `webapp/config/urls.py`, **그리고 `converter/models.py`(ConversionJob)**까지 포함해 단독 웨이브로 최우선 배치해야 한다(02 §9-2가 "불가/공통 선행"으로 지정한 것과 방향은 같으나, 이번 설계가 그 범위에 모델 스키마까지 명시적으로 포함시켜 02의 "불확실"을 해소했다).
+- unit-20/21/22/24가 공유하는 것은 **파일이 아니라 인터페이스 계약**(`ConversionJob` 필드, `executor.submit_job()`, `storage.delete_job_objects()` 시그니처) — 이 계약은 본 설계서 §3-2/§4-1에서 고정하므로, 오케스트레이터는 unit-19 완료 즉시 unit-20/21/23/24/25를 같은 웨이브에 병렬 배치할 수 있다(unit-22는 계약 기반 병렬 작성 후 통합검증 순차, 위 표 참고).
+- 동시 수정 금지(같은 파일 접촉) 조합: (unit-11, unit-18)은 v4와 무관(파일 자체가 다름), (unit-20, unit-18)은 순차. 그 외 새 조합 충돌 없음.
+- 오케스트레이터가 반드시 인지할 것: **이 표는 `pdf_to_hwpx/` 패키지 내부의 어떤 파일도 목록에 포함하지 않는다** — unit-19~26 중 어느 것도 unit-0~8/12/15~18의 파일범위를 침범하지 않는다(이것이 이번 리비전의 최우선 제약이었다).
 
 ---
 
 ## 2. 기술 스택 선정 및 근거
 
-> 본 프로젝트는 외부 클라우드 API/서비스를 전혀 사용하지 않는다(REQ-011, DEC-004). 따라서 "제공자 이용약관(상업적 이용, 호출 한도)" 확인 대상이 되는 외부 API 자체가 없다 — 이 사실 자체가 이 설계의 핵심 아키텍처 결정이다. 유일하게 외부와 상호작용하는 지점은 REQ-025 후원 링크(사용자가 클릭하면 OS 기본 브라우저로 정적 URL을 여는 것뿐, 앱이 호출하는 API가 아님)이며, 이용약관 확인 대상이 아니다. 후원 플랫폼 자체는 **GitHub Sponsors로 확정**(DEC-015)됐으나, **실제 프로필 URL은 05단계 unit-18 착수 시점에 확정**하므로 이 설계서에는 `common/constants.py`의 자리표시자 상수로만 정의한다(§8 미해결 사항 2번 참고).
-
-### 2-1. 핵심 스택 요약
+### 2-1. 웹 서비스 계층 신규 스택 (핵심 변환 로직 스택은 v4 §2-1/§2-2 그대로 유지 — 재수록하지 않음)
 
 | 영역 | 채택 | 대안(기각) | 근거 |
 |---|---|---|---|
-| 언어/런타임 | **Python 3.11+ (CPython)** | Java(hwpxlib 기반), Rust | 01보고서 기술 축이 확인한 PDF 파싱(PyMuPDF/pdfplumber/pypdf)·HWPX 쓰기(python-hwpx)·OCR(Tesseract/PaddleOCR) 후보가 모두 Python 생태계에 존재해 생태계 일관성이 가장 높다. Java(`hwpxlib`)는 HWPX 라이팅 성숙도는 더 높아 보이나, PDF 파싱 생태계(PyMuPDF 등)와 언어가 갈려 하나의 실행 프로세스·하나의 패키징 파이프라인을 유지하기 어렵다 |
-| PDF 파싱(텍스트/표) | **pdfplumber** (MIT, pdfminer.six 기반) | PyMuPDF/fitz | PyMuPDF는 **AGPL-3.0과 상용 라이선스의 듀얼 라이선스**다(Artifex). 이 결정(DEC-007) 당시에는 프로젝트 자체 라이선스가 "오픈소스 공개"(DEC-006)까지만 확정되고 구체적 SPDX 식별자는 미정이었다. AGPL 라이브러리를 채택했다면 사실상 프로젝트 전체를 AGPL 계열로만 배포할 수 있게 되어 **사용자의 향후 라이선스 선택권을 미리 좁히는 비가역적 제약**이 됐을 것이다. pdfplumber(MIT)는 이 제약이 없다. 이후 프로젝트 라이선스는 **MIT로 확정**됐고(DEC-014), pdfplumber(MIT)와 완전히 동일 계열이라 이 선택은 결과적으로도 최적이었음이 확인된다. 표 추출(`extract_tables()`)도 REQ-004 요구를 충족하는 수준의 기능을 제공한다 |
-| PDF 파싱(이미지 원본 바이트 추출) | **pypdf** (BSD 계열) | PyMuPDF | REQ-003("원본 이미지 바이트를 재인코딩 없이 그대로 삽입")을 충족하려면 임베딩된 이미지 스트림에 접근해야 한다. `pypdf`의 `Page.images[i].data`가 원본 바이트를 제공하며 라이선스도 pdfplumber와 동일 계열(허용적)이라 §2-1의 라이선스 정책과 일치한다 |
-| HWPX 읽기/쓰기 | **자체 OWPML 라이터**(Python 표준 `zipfile` + `lxml`), `python-hwpx`(Apache-2.0)는 구조 참고용으로만 활용 | `python-hwpx`를 그대로 채택, `hwpxlib`(Java) 연동 | 01보고서가 명시한 대로 `python-hwpx`의 표/이미지/복잡 서식 지원 성숙도는 README 수준만 확인되고 검증되지 않았다(불확실). REQ-008이 요구하는 "특정 크기/개체 조합에서만 나타나는 세로 위치 오차(6-6)"와 "암묵적 검증 규칙 미준수로 인한 경고창(6-8)"까지 잡으려면 생성되는 XML 전 과정을 직접 통제할 수 있어야 하는데, 성숙도 미검증 서드파티 라이브러리의 고수준 API 뒤에서는 이 통제가 어렵다. HWPX는 공개 표준(OWPML, KS X 6101) 기반 ZIP+XML이라 표준 라이브러리만으로 직접 생성 가능하다(REQ-012의 "2차 저작물 제작은 자유" 조건과 부합). `lxml`은 BSD 라이선스 (DEC-008). **컨테이너 골격(unit-4) 구현 전략**: "스펙에 맞는 XML"만으로는 6-8절의 암묵적 검증 규칙을 충족하지 못할 위험이 있으므로(01보고서), 처음부터 규격 문서만 보고 XML을 새로 설계하지 않고 **실제 한컴오피스/한글 뷰어가 저장한 최소 빈 문서(.hwpx)를 05/06단계에서 확보해 이를 리버스엔지니어링한 참조 템플릿(fixture)으로 삼아 골격을 구성**한다 — 참조 템플릿 확보는 "재배포 금지" 대상인 한컴의 사양 문서 원문이 아니라 사용자가 직접 만든 결과물이므로 REQ-012(사양 원문 재배포 금지)와 충돌하지 않는다 |
-| 로컬 OCR | **Tesseract** (Apache-2.0) + `pytesseract`(Apache-2.0) 래퍼 | PaddleOCR, EasyOCR, Naver Clova OCR | Clova는 클라우드 API라 REQ-011(100% 로컬 처리)과 정면 충돌해 채택 불가. PaddleOCR의 한국어 모델(`korean_PP-OCRv5_mobile_rec`)은 01보고서 확인 결과 **2026년 기준 비교적 최근에 추가**되어 실사용 검증 사례가 적다. Tesseract는 한국어(`kor`) 언어팩이 오래전부터 존재해 상대적으로 성숙하다(속도가 느리다는 트레이드오프는 있음, DEC-010) |
-| GUI | **Tkinter (Python 표준 라이브러리, PSF 라이선스)** | PySide6(LGPLv3), PyQt6(GPL/상용), wxPython | REQ-015가 요구하는 범위는 "파일 선택 다이얼로그 + 변환 진행률 표시" 수준의 **최소 GUI**다. Tkinter는 추가 의존성·라이선스 검토가 필요 없고(표준 라이브러리), PyInstaller 패키징 크기·복잡도를 최소화한다. PySide6/PyQt는 더 세련된 UI를 만들 수 있지만 이 최소 요구사항 대비 과설계다(DEC-009) |
-| CLI | **argparse (표준 라이브러리)** | Click, Typer | REQ-013 배치 변환 수준의 인자 파싱에는 표준 라이브러리로 충분, 추가 의존성 불필요 |
-| 패키징 | **PyInstaller** (GPLv2+예외조항, 번들되는 앱 코드의 라이선스를 제한하지 않음) | cx_Freeze, Nuitka | 가장 널리 쓰이고 문서화가 풍부한 Python→단일 실행파일 패키저. 1차 배포 타깃 OS는 **Windows**(DEC-011) — 01보고서가 확인한 대로 HWPX/한컴오피스 생태계 사용자는 사실상 전원 Windows 환경으로 추정되기 때문. 코드 자체는 OS 종속 API를 쓰지 않아(경로 처리에 `pathlib`+`platformdirs` 사용) 향후 macOS/Linux 빌드 확장이 가능하도록 열어둔다 |
-| 로컬 경로/설정 | `pathlib`(표준) + `platformdirs`(MIT) | 수동 OS 분기 | 로그·설정 파일 저장 위치(Windows `%LOCALAPPDATA%`, macOS `~/Library/Application Support`, Linux `~/.local/share`)를 표준화된 방식으로 얻기 위함. 허용적 라이선스라 §2-1 정책과 부합 |
-| 설정/이력 저장 | **로컬 JSON 파일 1개** (`settings.json`) | SQLite, 임베디드 DB | 저장할 데이터가 "최근 변환 파일 목록, GUI 창 크기" 수준으로 단순해 DB 도입은 과설계다(설계 원칙 1-1) |
+| 웹 프레임워크 | **Django 5.2.x** | Bottle(DEC-019, 폐기 — DEC-034), Flask, FastAPI | DEC-020(사용자 명시적 요구, AI-AUTO-WORK 구조 최대 재사용). Django는 ORM(Neon 연동)·관리자(admin)·미들웨어·설정 계층 분리 관례가 이미 성숙해 있어 "익명 다수 사용자 + DB + 오브젝트스토리지 + 운영자 전용 관리 화면"이 필요한 이번 요구사항 조합에 정확히 맞는다. Bottle은 이 조합(DB ORM, 마이그레이션, 관리자 인증)을 처음부터 다시 만들어야 해 이제는 오히려 더 큰 공수가 든다 |
+| CMS | **미사용** | Wagtail | DEC-026 — 콘텐츠 관리가 필요 없는 변환 도구이므로 Wagtail 전체를 들이는 것은 명백한 과설계. Django 자체와 배포 구조만 가져온다 |
+| 서빙 모델 | **WSGI (gunicorn, sync/gthread 워커, `--workers 1 --threads 4`)** | ASGI(uvicorn worker, AI-AUTO-WORK 방식) | AI-AUTO-WORK는 ASGI를 쓰지만, 이 프로젝트는 실시간 양방향 통신(WebSocket/SSE)이 전혀 필요 없다(v4부터 "폴링"으로 확정, §2-1 v4 근거 그대로 유효 — 다수 사용자 규모에서도 폴링 자체의 정당성은 변하지 않는다, 단지 서버가 다중 사용자를 처리해야 할 뿐). WSGI+gthread는 비동기 이벤트루프 개념 없이 스레드 여러 개로 동시 요청을 처리할 수 있어 "동기 라이브러리 함수를 그대로 호출"하는 이 서비스의 실행 모델과 정확히 맞는다 — ASGI를 쓰면 오히려 동기 변환 호출이 이벤트 루프를 블로킹하지 않도록 매번 `run_in_executor`로 감싸야 해 불필요한 복잡도가 늘어난다(과설계 회피) |
+| 비동기 작업 처리(DEC-024 확정, **DEC-031**) | **인프로세스 `concurrent.futures.ThreadPoolExecutor`(max_workers=2, 싱글톤) + Postgres(Neon) `ConversionJob` 모델로 상태 관리** | Celery+Redis, RQ+Redis, Django-Q(ORM 브로커) | (1) Render 무료 플랜은 "Background Worker" 서비스 타입에 무료 티어를 제공하지 않는다(Web Service만 무료 — 확인 필요 항목, §8-3에 재명시하되 이 판단으로 설계 방향을 정한다). 즉 Celery/RQ가 요구하는 "별도 워커 프로세스"를 무료로 상시 띄울 방법이 없다. (2) Redis(브로커)를 추가하면 새 관리형 서비스(비용·계정·연결 관리)가 하나 더 생긴다 — 이번 서비스의 예상 초기 트래픽(개인/오픈소스 프로젝트 규모)에서는 "지금 필요한 것"이 아니다. (3) Django-Q의 ORM 브로커를 쓰더라도 결국 `qcluster`라는 **별도 프로세스**가 필요해 (1)과 같은 문제가 재발한다. **대안**: 이미 "단일 gunicorn 워커"(AI-AUTO-WORK DEC-026 선례, 이번 프로젝트도 동일 제약)이므로, 그 워커 프로세스 **안에서** 작은 스레드풀로 백그라운드 실행하고 상태는 이미 쓰고 있는 Neon Postgres에 저장하면 **새 인프라를 하나도 추가하지 않고** REQ-027(업로드 즉시 응답 + 진행률 폴링)을 만족한다. 트레이드오프와 한계는 §8-1에 명시(스레드는 강제 종료 불가, 프로세스 재시작 시 진행 중 job 유실) — "나중에 트래픽이 늘어 이 한계가 실제 문제가 되면 그때 Redis+RQ로 전환한다"는 명시적 업그레이드 경로를 남긴다(과설계 회피의 핵심 근거) |
+| 데이터베이스 | **PostgreSQL (Neon, 서버리스, DEC-020/027)** | SQLite, MySQL | AI-AUTO-WORK와 동일 이유(Django 표준 관계형 DB, Render 배포 표준 관례). `ConversionJob` 1개 테이블 수준의 단순한 스키마이므로 DB 자체의 기능적 요구는 낮지만, Render 환경에서 "로컬 파일"(SQLite)은 배포 인스턴스 재시작/재배포 시 파일이 초기화될 수 있어 부적합하다 — 관리형 Postgres가 사실상 유일한 합리적 선택 |
+| 오브젝트 스토리지 | **Cloudflare R2(S3 호환) + django-storages + boto3** | Render Disk(영구 디스크, 유료), DB에 바이너리 직접 저장 | DEC-020/027. AI-AUTO-WORK와 동일 조합을 그대로 재사용(라이선스 확인은 §2-2). 업로드 PDF·변환 HWPX는 대체로 수 MB~수십 MB의 바이너리라 DB 컬럼에 직접 넣는 것은 Postgres 저장/백업 비용을 불필요하게 늘리는 과설계다 |
+| 정적 파일 서빙 | **WhiteNoise** | CDN 직접 구성 | AI-AUTO-WORK 재사용. 이 프로젝트의 정적 자원은 CSS 1개·JS 1개(진행률 폴링 스크립트) 수준이라 별도 CDN은 과설계 |
+| 캐시(레이트리밋 카운터) | **Django LocMemCache** | Redis, Memcached | `admin_auth.py`의 `is_rate_limited(ip)` 패턴을 그대로 재사용(§6-3). 단일 워커(--workers 1) 전제에서만 정확하다는 동일한 제약을 그대로 인지하고 설계한다(AI-AUTO-WORK DEC-012/024/026과 동일 트레이드오프) |
+| 관리자 인증 | **Django 표준 `django.contrib.admin` + `admin_auth.py` 레이트리밋 패턴 재사용** | 별도 운영자 대시보드 신규 구현 | 이 서비스는 일반 사용자 로그인이 아예 없다(DEC-023) — Django 관리자 계정은 **운영자가 `ConversionJob` 현황을 조회/수동 삭제하는 최소 ops 도구**로만 쓴다. AI-AUTO-WORK의 로그인 무차별대입 방어 패턴(`RateLimitedAdminLoginView`, IP 기준 LocMemCache 카운터)을 그대로 재사용해 새로 설계하지 않는다 |
 
-### 2-2. 라이선스 호환성 정리 (REQ-012 연계)
+### 2-2. 라이선스/이용약관 확인 — 신규 의존성만 (핵심 변환 로직 의존성은 v4 §2-2 그대로 유효)
 
-| 의존성 | 라이선스 | 재배포 시 의무 | 프로젝트 목적과 충돌 여부 |
-|---|---|---|---|
-| pdfplumber, pdfminer.six | MIT | 저작권/라이선스 고지 포함 | 없음 |
-| pypdf | BSD-3-Clause | 저작권 고지 포함 | 없음 |
-| lxml | BSD | 저작권 고지 포함 | 없음 |
-| python-hwpx (참고용, 코드 직접 포함하지 않고 구조만 참고) | Apache-2.0 | 코드를 실제로 vendoring하면 NOTICE 고지 필요 | 없음(참고만 하고 자체 구현하므로 고지 의무 자체가 발생하지 않을 가능성이 높음 — 05 구현 시 실제로 코드를 복사/포크하면 반드시 NOTICE에 추가) |
-| Tesseract, pytesseract | Apache-2.0 | 저작권/NOTICE 고지, 수정 시 고지 | 없음. Tesseract 실행 바이너리를 PyInstaller 패키지에 동봉하는 방안(DEC-013)도 Apache-2.0이 허용 |
-| Tkinter, argparse, pathlib, zipfile | Python 표준 라이브러리(PSF License) | 없음(사실상 제약 없음) | 없음 |
-| platformdirs | MIT | 저작권 고지 포함 | 없음 |
-| PyInstaller | GPLv2 + 부트로더 예외조항 | PyInstaller **자체 소스**를 수정 배포할 때만 GPL 의무 발생, 번들되는 앱 코드의 라이선스에는 영향 없음(공식 FAQ 기준) | 없음 |
-| **(기각) PyMuPDF/fitz** | AGPL-3.0 / 상용 듀얼 | 배포 시 전체 조합 저작물을 AGPL 호환 라이선스로 공개해야 함(또는 상용 라이선스 구매) | **채택하지 않음** — 프로젝트 라이선스 선택권을 미리 제한하므로 §2-1에서 pdfplumber+pypdf로 대체 |
+| 의존성/서비스 | 라이선스 또는 약관 확인 결과 | 상업적 이용 | 호출 한도 | 비고 |
+|---|---|---|---|---|
+| Django | BSD-3-Clause | 가능 | 해당없음(자체 호스팅) | 프로젝트 라이선스(MIT, DEC-014)와 충돌 없음 |
+| psycopg[binary] | LGPL-3.0(psycopg3) | 가능(동적 링크 조건 충족, AI-AUTO-WORK가 이미 동일 조합으로 실사용) | 해당없음 | AI-AUTO-WORK 선례 그대로 재확인 |
+| dj-database-url | BSD-2-Clause | 가능 | 해당없음 | |
+| django-storages[s3] | BSD-3-Clause | 가능 | 해당없음 | |
+| boto3 | Apache-2.0 | 가능 | 해당없음(SDK, R2 호출 한도는 아래 참고) | |
+| gunicorn | MIT | 가능 | 해당없음 | ASGI용 uvicorn은 채택하지 않으므로(§2-1) `uvicorn[standard]` 의존성은 추가하지 않는다 |
+| whitenoise | MIT | 가능 | 해당없음 | |
+| **Render(플랫폼)** | Render 서비스 약관(Terms of Service) — **일반 상업적 SaaS 호스팅 이용에 해당하며, 크롤링 등 데이터 수집형 약관 이슈는 해당 없음**(우리가 "이용하는" 대상이 아니라 "호스팅받는" 대상이므로 성격이 다르다). **무료 플랜의 정확한 리소스 한도(RAM/CPU/월 인스턴스시간, Background Worker 무료 제공 여부)는 실시간 웹 조사 권한이 없어 이번 세션에서 확정적으로 재확인하지 못했다** — 기존 지식(2026-01 기준) 근거로 "Background Worker 무료 미제공"을 전제로 설계했으나(§2-1), **실제 계정 개설 시점(10~12단계)에 Render 대시보드에서 재확인 필수**(§8-3 "확인 필요"). 확인 결과가 다르면(예: 무료 Background Worker가 실제로 존재) §2-1 DEC-031을 재검토할 여지가 생기나, 지금 설계(인프로세스 스레드풀)는 그 경우에도 "더 나쁜 선택"이 되는 것이 아니라 "더 단순한 v1 선택"일 뿐이므로 착수를 막지는 않는다 | 확인 불필요(상업적 이용 계약 자체가 서비스 목적) | 무료 플랜 제한(정확한 수치는 위와 동일 사유로 확인 필요) | DEC-027(AI-AUTO-WORK와 계정 분리) |
+| **Neon(플랫폼)** | Neon 서비스 약관 — 동일 사유로 크롤링/저작권 이슈 해당 없음(DBaaS 계약). 무료 티어 정확한 컴퓨트/저장 한도는 AI-AUTO-WORK의 `core/monitoring.py`가 이미 "월 100 CU-hour, 0.5GB"로 실측 기재해둔 값이 있어 이를 참고치로 재사용(단, 이 프로젝트는 **별도 신규 Neon 프로젝트**이므로 그 프로젝트 고유의 무료 한도가 그대로 적용된다는 보장까지는 아니며, 실제 확정은 10~12단계) | 확인 불필요 | 참고치: 월 100 CU-hour, 저장 0.5GB(AI-AUTO-WORK 실측값, 재확인 권고) | DEC-027 |
+| **Cloudflare R2(플랫폼)** | Cloudflare 서비스 약관 — 오브젝트 스토리지 계약, 크롤링 이슈 해당 없음. R2 무료 티어(월 10GB 저장, Class A/B 오퍼레이션 무료 할당량)는 AI-AUTO-WORK 03단계가 이미 확인한 값과 동일 플랫폼이라 재사용 가능하나, **이번 서비스는 매 요청마다 업로드+다운로드+삭제(오퍼레이션 3회/요청)가 발생**해 블로그(이미지 위주, 쓰기 적음)보다 오퍼레이션 소모 패턴이 다르다는 점을 08/10단계 실측 모니터링 항목으로 남긴다 | 확인 불필요 | 참고치: 월 10GB 저장 + Class A/B 오퍼레이션 무료 할당(재확인 권고) | DEC-027 |
 
-**프로젝트 자체 라이선스: MIT (확정, DEC-014)**. 위 조합은 모두 허용적(MIT/BSD/Apache-2.0) 또는 실질적 제약이 없는 라이선스이므로, 애초에 MIT/Apache-2.0/BSD/GPL 계열 중 무엇을 고르든 재배포 의무 충돌이 없었다(설계 당시 선택지를 넓게 유지하는 것이 목표였다). 사용자가 최종적으로 **MIT**를 택했으므로(DEC-014), 전체 의존성(pdfplumber/pdfminer.six MIT, pypdf BSD-3-Clause, lxml BSD, python-hwpx 참고 Apache-2.0, Tesseract/pytesseract Apache-2.0, platformdirs MIT, PyInstaller GPLv2+예외조항)이 모두 MIT와 호환됨을 한 줄로 재확인한다 — 표 안의 어느 항목도 MIT 공개와 충돌하는 재배포 의무(예: 소스 공개 강제)를 발생시키지 않는다. **LICENSE 파일 자체(및 THIRD_PARTY_LICENSES.md 채우기)의 생성 작업은 지금 이 설계 단계에서 하지 않고, 05단계(초기 스캐폴딩) 또는 11단계(문서화)에서 처리한다** — unit-10의 파일 범위(§1-3)는 그대로 유지된다.
+**전체 의존성 라이선스 재확인**: 위 신규 의존성 전부가 MIT/BSD/Apache-2.0/LGPL(동적 링크) 계열로, 프로젝트 라이선스 MIT(DEC-014)와 재배포 의무 충돌이 없다. 오픈소스 공개(DEC-006) 전제도 그대로 유지된다.
+
+### 2-3. 인프라 리전 선택과 국외이전 판단 (DEC-035)
+
+- **판단 대상**: Render(웹 서비스), Neon(DB), Cloudflare R2(스토리지) 3곳 모두 **대한민국 내 리전을 제공하지 않는다**(2026-01 기준 지식으로는 Render/Neon 모두 서울 리전이 없고, Cloudflare R2는 애초에 특정 국가에 물리적으로 고정하는 개념이 약한 글로벌 분산 스토리지다 — 버킷 생성 시 "location hint"만 대륙 단위로 지정 가능). **이 사실 자체(리전 선택지 자체가 전부 국외)는 이번 리비전이 확정할 수 있는 사실이고, 어느 리전을 최종 선택하든 결론이 바뀌지 않는다.**
+- **결론(확정)**: **국외이전 고지는 무조건 필요하다.** 02-planning.md v5 §8-3 A-20이 "03단계에서 실제 리전 확정 후 재확인"으로 남긴 질문에 대한 답은 "리전이 무엇이든 Yes"다 — REQ-030(개인정보처리방침)은 이 사실을 명시해야 한다(§6-2).
+- **권장 리전(참고, 확정적 웹 조사 불가로 "확인 필요" 유지)**: 한국 사용자 대상 서비스이므로 지연시간을 고려해 **Render Singapore 리전 + Neon AWS `ap-southeast-1`(Singapore) 리전**을 1순위로 검토할 것을 권고한다(2026-01 기준 지식으로 두 플랫폼 모두 싱가포르 리전을 제공한다고 알고 있으나, 실시간 재확인 불가 — 10~12단계 실제 계정 개설 시점에 대시보드에서 반드시 재확인). 확인 결과 싱가포르 리전이 없거나 조건이 맞지 않으면 미국/유럽 리전으로 대체해도 위 "국외이전 고지 필요" 결론 자체는 바뀌지 않으므로 이 선택이 설계를 막지 않는다.
+- **개인정보처리방침(REQ-030, unit-25) 반영 사항**: (a) 이전되는 국가(예: 싱가포르 또는 최종 확정 리전), (b) 이전받는 자(Render Inc., 관련 DB 운영사, Cloudflare Inc. — 정확한 법인명은 실제 계정 개설 후 각 사 이용약관에서 재확인해 채운다), (c) 이전 목적(PDF→HWPX 변환 처리 및 TTL 내 임시 저장), (d) 보유·이용기간(§6-2 TTL과 동일, 최대 60분), (e) 이전 거부 방법(이 서비스는 서버 처리가 전제이므로 "거부 시 서비스 이용 불가"임을 정직하게 고지) — 이 5개 항목은 개인정보보호법 제28조의8이 요구하는 국외이전 고지 항목에 대응한다(에이전트가 법률 자문을 대신하는 것이 아님, DEC-021 권고 재확인).
 
 ---
 
-## 3. 데이터 모델 (중간표현 IR, 설정 파일, 마이그레이션 전략)
+## 3. 데이터 모델
 
-> 관계형 DB/영속 스키마가 없는 로컬 도구이므로, 여기서의 "데이터 모델"은 (a) 파이프라인 내부를 흐르는 **중간표현(IR) 객체**, (b) 로컬에 영속되는 **설정/이력 JSON 파일** 두 가지를 의미한다.
+### 3-1. 중간표현(IR) — 변경 없음
 
-### 3-1. 중간표현(IR) 엔티티
+v4 §3-1(`PageIR`/`TextBlockIR`/`ImageBlockIR`/`TableBlockIR`/`TableCellIR`/`FormulaCandidateIR`, `pdf_to_hwpx/pdf_reader/ir.py`, DEC-016)이 그대로 유효하다. 이 IR은 `pdf_to_hwpx` 패키지 내부에서만 흐르며 Django 계층은 이를 전혀 알 필요가 없다(라이브러리 경계, §1-1).
+
+### 3-2. 신규: `ConversionJob` 모델 (unit-19 산출물, Neon Postgres)
 
 ```python
-# pdf_reader가 만들어 hwpx_writer/orchestrator에 넘기는 공용 스키마
-@dataclass
-class PageIR:
-    page_index: int
-    width_pt: float
-    height_pt: float
-    text_blocks: list[TextBlockIR]
-    image_blocks: list[ImageBlockIR]
-    table_blocks: list[TableBlockIR]
-    formula_candidates: list[FormulaCandidateIR]   # unit-16 소비
-    is_scanned: bool                                # True면 orchestrator가 unit-12(OCR) 경로로 라우팅
+# webapp/converter/models.py
+import uuid
+from django.db import models
 
-@dataclass
-class TextBlockIR:
-    bbox: tuple[float, float, float, float]
-    text: str            # unit-15(hangul_normalizer)가 NFC 정규화 완료한 상태로 전달됨
-    font_name: str | None
-    font_size: float | None
-    bold: bool
-    italic: bool
-    to_unicode_missing: bool   # REQ-007: True면 대체문자(□)로 치환된 상태, quality_report에 경고로 집계
+class ConversionJob(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "대기중"
+        PROCESSING = "processing", "변환중"
+        DONE = "done", "완료"
+        FAILED = "failed", "실패"
+        EXPIRED = "expired", "만료(파일삭제됨)"
 
-@dataclass
-class ImageBlockIR:
-    bbox: tuple[float, float, float, float]
-    raw_bytes: bytes      # 재인코딩 없이 원본 그대로(REQ-003)
-    image_format: str     # "jpeg"|"png"|... (pypdf가 판별한 원본 포맷)
+        # 상태 전이 규칙(구현자 필독): PENDING -> PROCESSING -> (DONE | FAILED) -> EXPIRED.
+        # DONE = orchestrator.convert()가 예외 없이 반환됨(REQ-009 계약대로) — 이 경우
+        #   result_success=True/False 둘 다 가능하다(False는 "변환은 끝났지만 품질/부분
+        #   실패", 예: 손상된 PDF를 orchestrator가 스스로 감지해 errors에 담아 반환한
+        #   경우). 즉 DONE은 "라이브러리가 통제된 방식으로 마쳤다"는 뜻이지 "성공"의
+        #   동의어가 아니다.
+        # FAILED = executor 자신의 인프라 레벨 실패(orchestrator.convert() 호출 자체가
+        #   처리되지 못함) — 예: R2 업로드/다운로드 실패, 예상치 못한 미핸들링 예외로
+        #   워커 함수가 죽음. 이 경우 result_success/result_warnings/result_errors는
+        #   비어 있을 수 있다.
+        # 다운로드 뷰(§4-4)는 이 둘을 구분해 사용자 메시지를 다르게 보여준다:
+        #   DONE+result_success=False -> result_errors를 그대로 노출(사용자가 이해할
+        #   수 있는 콘텐츠 문제, REQ-009). FAILED -> "서버 처리 중 오류가 발생했습니다.
+        #   다시 시도해주세요" 같은 일반 메시지(내부 원인을 사용자에게 노출하지 않음).
 
-@dataclass
-class TableBlockIR:
-    bbox: tuple[float, float, float, float]
-    rows: int
-    cols: int
-    cells: list[TableCellIR]
-    has_merged_cells: bool   # REQ-004: True면 best-effort 처리, quality_report에 기록
+    job_id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)
 
-@dataclass
-class TableCellIR:
-    row_span: int
-    col_span: int
-    text: str
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    downloaded_at = models.DateTimeField(null=True, blank=True)
+    purged_at = models.DateTimeField(null=True, blank=True)  # R2 오브젝트/원본파일명 삭제 완료 시각
 
-@dataclass
-class FormulaCandidateIR:
-    bbox: tuple[float, float, float, float]
-    source: Literal["image_region", "non_table_glyph_cluster"]
+    # 입력 옵션(REQ-014 OCR 등) — ConversionOptions와 1:1 대응
+    enable_ocr = models.BooleanField(default=False)
+    ocr_lang = models.CharField(max_length=16, default="kor")
+
+    # R2 오브젝트 키(파일 내용 자체는 DB에 없음, §2-1)
+    input_object_key = models.CharField(max_length=255)
+    output_object_key = models.CharField(max_length=255, blank=True)
+
+    # 진행률(ProgressEvent를 그대로 매핑, §4-1)
+    progress_stage = models.CharField(max_length=16, blank=True)
+    progress_current_page = models.IntegerField(default=0)
+    progress_total_pages = models.IntegerField(default=0)
+    progress_message = models.CharField(max_length=255, blank=True)
+
+    # 결과(ConversionResult를 그대로 매핑)
+    result_success = models.BooleanField(null=True)
+    result_warnings = models.JSONField(default=list)   # list[dict] — ConversionWarning 직렬화
+    result_errors = models.JSONField(default=list)      # list[dict] — ConversionIssue 직렬화
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "created_at"])]  # cleanup.py의 TTL 스캔 쿼리용
 ```
 
-- **IR의 역할**: `hwpx_kernel/schema.py`가 정의하는 "IR → XML 프래그먼트 변환 계약"의 입력측 절반이 이 IR이다. `paragraph_builder.py`/`table_builder.py`/`image_embedder.py`는 이 IR 데이터클래스만 알면 되고, PDF가 pdfplumber로 파싱됐는지 다른 라이브러리로 파싱됐는지 몰라도 된다(파서 교체 시 라이터 계열은 수정 불필요 — 1-1절 장애 격리 원칙의 구체화).
-- **마이그레이션 전략**: IR은 영속 저장되지 않는(메모리에서만 존재하다 소멸하는) 휘발성 객체이므로 스키마 마이그레이션 개념이 적용되지 않는다. 다만 `dataclass`에 필드를 추가/삭제할 경우 `hwpx_kernel/schema.py`의 계약 버전을 올리고(예: `SCHEMA_VERSION = "1.1"`), 5/6/7 unit이 이를 인지하도록 CHANGELOG에 남긴다.
-
-### 3-2. 로컬 영속 파일
-
-| 파일 | 형식 | 내용 | 보관 정책 |
-|---|---|---|---|
-| `settings.json` | JSON | 최근 변환 파일 경로(최대 10개), GUI 창 크기, 마지막 사용 OCR 언어 | 사용자가 삭제하면 기본값으로 재생성. 개인정보 포함하지 않음(파일 "경로"만 저장 — 경로 자체에 개인정보성 문자열이 포함될 수 있어 §6에서 별도 고지) |
-| `logs/pdf-to-hwpx.log` (+`.1`,`.2`...) | 텍스트(RotatingFileHandler) | 타임스탬프, 로그 레벨, 이벤트 코드, 파일명(전체 경로 아님, 6-1 참고), 오류 코드 | 5MB × 5개 롤링, 초과분 자동 삭제(REQ-019) |
-| 변환 중 임시 파일 | `tempfile.TemporaryDirectory()` | OCR 중간 이미지, 압축 해제 스테이징 | 변환 성공/실패와 무관하게 `with` 블록 종료 시 즉시 삭제(§6 개인정보 처리 원칙) |
-
-- **개인정보를 다루는 항목이 없다** — 원본 PDF·추출 텍스트·이미지·OCR 결과 중 어느 것도 `settings.json`이나 로그에 본문 형태로 영속 저장되지 않는다(§6에서 상술).
+- **원본 파일명은 저장하지 않는다(DEC-036).** v4 §6-2가 이미 "파일명 자체에 개인정보가 담길 수 있다"고 지적했는데, 공개 서비스에서는 이 위험이 더 커진다(서버 DB에 저장되기 때문). 사용자가 다운로드 시 원래 파일명을 되찾는 방법은 **서버 저장이 아니라 클라이언트(브라우저 JS)가 기억**하는 방식으로 구현한다 — 업로드 시점에 `<input type="file">`이 이미 `file.name`을 브라우저 메모리에 갖고 있으므로, 다운로드 완료 후 JS가 `<a download="원본이름.hwpx">`로 저장명을 지정한다(서버 응답의 `Content-Disposition`은 `converted.hwpx` 같은 범용 이름만 내려준다). 04단계 UX 설계에 이 인터랙션을 인수인계한다(§8-2).
+- **`client_ip`, `original_filename` 등 식별 가능 정보는 이 모델에 아예 필드로 두지 않는다** — 레이트리밋(REQ-026)은 DB가 아니라 LocMemCache(휘발성, 재시작 시 소멸)에서만 IP를 다룬다(§6-3). 이는 REQ-030(수집 최소화)을 스키마 수준에서 강제하는 설계다.
+- **보관 정책(2단계)**: (1) `input_object_key`/`output_object_key`가 가리키는 R2 오브젝트 자체는 생성 후 최대 60분(§4-3 TTL) 내 삭제된다(REQ-028). (2) `ConversionJob` 행 자체(파일명 등 식별정보가 없는 익명화된 운영 메타데이터)는 KPI 측정(02 §5-2 "업로드→다운로드 지연시간" 등)을 위해 조금 더 길게(예: 30일) 보관한 뒤 배치로 하드 삭제한다 — 이 30일 보관은 개인정보가 아닌 운영 통계 목적이므로 REQ-030 개인정보처리방침에는 "식별 불가능한 운영 통계"로 명시하고, 개인정보 보관기간(60분)과 혼동되지 않게 문구를 분리한다(§6-2).
+- **마이그레이션 전략**: 최초 마이그레이션 1개(unit-19)로 시작, 이후 필드 추가는 표준 Django 마이그레이션으로 관리한다. 기존 v4 §3-1의 IR과 달리 이 모델은 **영속 데이터**이므로 마이그레이션이 실제로 의미를 가진다(v4는 "IR은 휘발성이라 마이그레이션 개념이 없다"고 명시했던 것과 대비).
 
 ---
 
 ## 4. API/인터페이스 명세
 
-> 웹 API가 아니라 (a) 파이썬 공개 함수 시그니처, (b) CLI 인자 명세, (c) GUI 이벤트 계약, (d) 예외 계층으로 구성된다. "이 설계서로 구현할 개발자"가 추가 질문 없이 착수할 수 있도록 예외 케이스까지 명시한다.
+> v4 §4-1(핵심 공개 API)·§4-2(예외 계층)는 **변경 없이 그대로 유효**하다(재수록만 함, 아래 4-1). §4-3(CLI)도 변경 없다. §4-4(웹 이벤트/API 계약)는 **전면 재작성**한다(Bottle 라우트 → Django 뷰, 아래 4-4).
 
-### 4-1. 핵심 공개 API (`core/orchestrator.py`)
+### 4-1. 핵심 공개 API (`pdf_to_hwpx/core/orchestrator.py`, unit-8) — v4 그대로, 변경 없음
 
 ```python
 def convert(
@@ -259,196 +273,181 @@ def convert(
 ) -> ConversionResult:
     """PDF 1개를 HWPX 1개로 변환한다. 실패해도 예외를 던지지 않고
     ConversionResult.success=False + errors에 담아 반환한다(REQ-009).
-    호출자(CLI/GUI)가 이 결과를 사용자 메시지로 매핑한다."""
+    호출자(CLI/웹 실행기)가 이 결과를 사용자 메시지로 매핑한다."""
+```
+(`ConversionOptions`/`ProgressEvent`/`ConversionResult`/`ConversionWarning`/`ConversionStats` 필드 정의는 v4 §4-1과 100% 동일 — 이 문서에서 재정의하지 않는다.)
 
-@dataclass
-class ConversionOptions:
-    enable_ocr: bool = False
-    ocr_lang: str = "kor"                 # pytesseract 언어 코드, 복수 지정은 "kor+eng"
-    overwrite_existing: bool = False
-    target_hwpx_min_version: str = HWPX_MIN_SUPPORTED_VERSION   # §5, §8 "확인 필요" 참고
-    progress_callback: Callable[[ProgressEvent], None] | None = None
-    # 주의: 보존 우선순위(표>이미지>텍스트, REQ-005)는 사용자 옵션이 아니라
-    #       orchestrator 내부 고정 정책이다 — 옵션으로 노출하지 않는다(과설계 배제).
+### 4-2. 예외 계층 (`pdf_to_hwpx/common/exceptions.py`) — v4 §4-2 그대로, 변경 없음
 
-@dataclass
-class ProgressEvent:
-    stage: Literal["loading", "extracting", "building", "saving", "done"]
-    current_page: int
-    total_pages: int
-    message: str
+### 4-3. CLI 명세 — v4 §4-3 그대로, 변경 없음 (사용주체만 02 A-15로 재해석됨)
 
-@dataclass
-class ConversionResult:
-    success: bool
-    output_path: Path | None
-    warnings: list[ConversionWarning]     # REQ-005/009/016이 소비
-    errors: list[ConversionIssue]
-    stats: ConversionStats
+### 4-4. 웹 API 계약 (`webapp/converter/`, REQ-001/010/015/026/027/028/029, 전면 재작성)
 
-@dataclass
-class ConversionWarning:
-    code: str            # 예: "TABLE_MERGE_NOT_PRESERVED", "TOUNICODE_MISSING", "FORMULA_FALLBACK_IMAGE"
-    page_index: int
-    detail: str           # 사용자에게 그대로 노출 가능한 한국어 문구
+**HTTP 라우트 명세**:
 
-@dataclass
-class ConversionStats:
-    total_pages: int
-    tables_detected: int
-    tables_preserved_fully: int
-    images_embedded: int
-    chars_extracted: int
-    chars_replaced_with_placeholder: int   # REQ-007
-    elapsed_seconds: float
+| 라우트 | 메서드 | 요청 | 응답 | 설명 |
+|---|---|---|---|---|
+| `/` | GET | 없음 | `text/html` | 업로드 폼(`<input type="file" accept=".pdf">`), OCR 체크박스, 진행률 영역, 후원 링크(REQ-025), 개인정보처리방침 링크(REQ-030) |
+| `/convert` | POST | `multipart/form-data`: `file`, `enable_ocr`, `ocr_lang` | `application/json`: `{"job_id": "<uuid4>"}` (HTTP 202) 또는 에러(아래) | (1) `limits.py`가 `Content-Length`를 사전 검사(§6-4). (2) 업로드 파일을 R2 `uploads/<job_id>.pdf`에 저장. (3) `ConversionJob(status=PENDING)` 행 생성. (4) `executor.submit_job(job_id)` 호출 후 **즉시 응답**(블로킹 없음, REQ-027). 에러 응답: 파일크기 초과 → 413, 레이트리밋 초과 → 429, 큐 포화(대기 20건 초과, §5) → 503 |
+| `/api/jobs/<uuid:job_id>/` | GET | 없음 | `application/json`: `{"status": "...", "progress": {...}, "warnings": [...], "errors": [...]}` (job_id 없음/만료됨 → 404) | 브라우저 JS가 0.5~1초 간격 폴링(v4와 동일 메커니즘, 서버측 저장소만 인메모리 dict→DB 행으로 변경). **응답은 오직 DB 조회**이며 라이브러리를 다시 호출하지 않는다 |
+| `/download/<uuid:job_id>/` | GET | 없음 | 완료+성공: `application/octet-stream`(`Content-Disposition: attachment; filename="converted.hwpx"`, HTTP 200). 완료+실패(status=DONE, result_success=False): `application/json`으로 `result_errors`를 그대로 노출(**HTTP 422**). 인프라 실패(status=FAILED): `application/json`으로 일반 오류 메시지만 노출, 내부 원인 비노출(**HTTP 422**, §3-2 상태전이 규칙 참고). 진행중: 409. 없음/이미 만료: 404 | **Django 뷰가 R2에서 바이트를 읽어 그대로 스트리밍(proxy)한다**(DEC-036 — presigned URL 리다이렉트 방식은 v1에서 채택하지 않음, 근거 §8-1). 스트리밍이 끝나면 `downloaded_at`을 기록하고 **해당 job의 R2 오브젝트(업로드본+결과본)를 즉시 삭제**한다(REQ-028의 "다운로드 후 즉시 삭제" 조항을 문자 그대로 구현) |
+| `/healthz` | GET | 없음 | `text/plain: "ok"` | AI-AUTO-WORK 패턴 그대로 재사용 — DB 접속 확인 없는 얕은 헬스체크(Neon 콜드스타트 오탐 방지, 동일 근거) |
+| `/privacy/` | GET | 없음 | `text/html` | 개인정보처리방침(REQ-030, unit-25) |
+
+**진행률 갱신 메커니즘**: v4의 "폴링" 채택 근거(§2-1)는 사용자 규모가 늘어도 그대로 유효하다 — 각 사용자는 자신의 `job_id`만 폴링하므로 동시 사용자 수가 늘어도 폴링은 "요청마다 독립적인 짧은 DB 조회 1건"일 뿐 서버 상태를 무겁게 만들지 않는다.
+
+**실행 계약(`converter/executor.py`, unit-21 — unit-20/22가 의존하는 고정 시그니처)**:
+```python
+_POOL = ThreadPoolExecutor(max_workers=2)          # DEC-031: 프로세스 전역 싱글톤
+_PENDING_QUEUE_LIMIT = 20                            # REQ-029, §5
+
+def submit_job(job_id: uuid.UUID) -> None:
+    """PENDING 상태의 ConversionJob을 스레드풀에 제출한다.
+    큐 포화(실행중+대기중 job 합계 >= _PENDING_QUEUE_LIMIT) 시
+    QueueFullError를 던진다 — 호출자(views.py)가 이를 잡아 HTTP 503으로 매핑한다."""
+
+def _run(job_id: uuid.UUID) -> None:
+    """실제 워커 함수(스레드 안에서 실행). R2에서 입력파일을 로컬 임시경로로
+    내려받고, ConversionOptions.progress_callback으로 매 ProgressEvent마다
+    ConversionJob 행을 UPDATE, orchestrator.convert() 완료 후 결과를 R2에
+    올리고 ConversionJob.status/result_*를 UPDATE한다.
+    소프트 타임아웃(§5, 5분)은 여기가 아니라 views.py의 폴링 응답 생성 시
+    '생성 후 5분 경과 + 아직 processing'이면 TIMEOUT으로 간주해 사용자에게
+    보여주는 방식으로 처리한다(스레드 자체를 강제 종료하지 않음 — §8-1 한계 명시)."""
 ```
 
-### 4-2. 예외 계층 (`common/exceptions.py`) — REQ-009 "실패/부분실패 안내"의 근거
-
-```
-ConversionError (기반, orchestrator가 항상 잡아서 ConversionResult.errors로 변환)
-├── PdfLoadError
-│   ├── EncryptedPdfError      # 비밀번호로 보호된 PDF — "지원하지 않습니다" 메시지 고정
-│   ├── CorruptedPdfError      # 파싱 자체가 실패
-│   └── EmptyPdfError          # 0페이지
-├── HwpxWriteError
-│   ├── ContainerBuildError    # unit-4 zip 골격 생성 실패(디스크 공간 부족 등)
-│   └── OutputPathError        # 출력 경로 쓰기 권한 없음 / overwrite_existing=False인데 파일 존재
-└── OcrEngineError
-    └── TesseractNotFoundError # 바이너리 미탐지(개발 중 미번들 환경 한정, §8 DEC-013 참고)
-```
-
-- 위 계층 밖의 예상 못한 예외(버그)는 orchestrator 최상위에서 `except Exception`으로 잡아 `ConversionIssue(code="INTERNAL_ERROR", ...)`로 변환하고 **반드시 traceback을 로컬 로그에만 기록**한다(화면에는 노출하지 않음 — 내부 경로/스택트레이스가 사용자 파일 경로를 포함할 수 있어 §6 개인정보 원칙과 연결). 이 경로가 REQ-009의 "미처리 예외 0%" KPI(02 §5)를 만족시키는 최후 방어선이다.
-- **정의된 엣지 케이스(2차 검증에서 명시적으로 확인)**:
-  - 암호화 PDF → `EncryptedPdfError` → "비밀번호로 보호된 PDF는 지원하지 않습니다."
-  - 손상된 PDF → `CorruptedPdfError` → "PDF 파일을 읽을 수 없습니다. 파일이 손상되었을 수 있습니다."
-  - 0페이지 PDF → `EmptyPdfError` → "빈 PDF 파일입니다."
-  - 출력 파일 이미 존재 + `overwrite_existing=False` → `OutputPathError` → "같은 이름의 파일이 이미 있습니다. 덮어쓰거나 다른 이름을 지정하세요."
-  - 출력 디렉터리 쓰기 권한 없음 → `OutputPathError`
-  - Tesseract 미설치(바이너리 없음, `enable_ocr=True`인데 발생) → `TesseractNotFoundError` → "OCR 엔진을 찾을 수 없습니다. 프로그램을 재설치하거나 문의해주세요."(정상 배포판은 바이너리 동봉이 원칙 — DEC-013 — 이므로 이 오류는 개발 환경/비정상 설치에서만 발생 가정)
-  - 수식 후보 판정이 애매한 경우 → 예외를 던지지 않고 항상 안전한 폴백(이미지 대체, REQ-018)으로 처리 — "판정 불가"는 오류가 아니라 정상 동작 경로다.
-  - 대용량 PDF(수백 MB) → 하드 상한을 두지 않는다(로컬 도구이므로 사용자 하드웨어에 위임). 다만 500MB 초과 시 `ConversionWarning(code="LARGE_FILE_SLOW")`로 처리 시간이 길어질 수 있음을 사전 경고한다.
-
-### 4-3. CLI 명세 (`cli/__main__.py`, REQ-013)
-
-```
-pdftohwpx convert <input.pdf> [-o <output.hwpx>] [--ocr] [--lang kor+eng] [--overwrite]
-pdftohwpx batch <input_dir> [-o <output_dir>] [--ocr] [--lang kor+eng] [--overwrite]
-```
-- 종료 코드: `0`=완전 성공, `1`=부분 성공(warnings 존재), `2`=실패(errors 존재). `batch`는 파일 중 하나라도 실패하면 종료 코드 `2`, 전부 경고만 있으면 `1`.
-- 표준출력: 파일별 1줄 요약(`[OK] a.pdf -> a.hwpx (경고 2건)`), `--verbose`로 상세 로그.
-- 진행률: `ProgressEvent`를 받아 단순 텍스트 진행바로 렌더링(`\r` 캐리지리턴 갱신).
-
-### 4-4. GUI 이벤트 계약 (`gui/app.py`, REQ-015)
-
-- 파일 선택(Tkinter `filedialog.askopenfilename`) → 변환 버튼 클릭 → **UI 스레드가 아닌 별도 `threading.Thread`에서 `orchestrator.convert()` 호출**(Tkinter는 스레드 안전하지 않으므로, 워커 스레드는 `queue.Queue`에 `ProgressEvent`를 넣고 UI 스레드는 `after()` 폴링으로 큐를 소비해 진행률 바를 갱신한다 — 명시하지 않으면 구현자가 UI 프리징이나 스레드 충돌을 겪을 수 있는 지점이라 2차 검증에서 구체화함).
-- 변환 완료 시 `ConversionResult.warnings`를 리스트 박스에 표시(REQ-016 품질 리포트와 동일 데이터 재사용).
-- 취소 버튼은 v1 범위에 포함하지 않는다(REQ-015가 요구하지 않음, YAGNI — §8에 명시).
-- 후원 버튼(REQ-025, unit-18): 클릭 시 `webbrowser.open(SPONSOR_URL)` 호출만 하며, 클릭 이벤트 자체를 로컬에도 원격에도 기록하지 않는다(§6).
+- **로깅**: 이 실행 경로는 `pdf_to_hwpx.common.logging_setup.install()`을 호출하지 않는다(§1-1) — `orchestrator.convert()` 내부의 `logging.getLogger(...)` 호출은 Django 표준 로깅(콘솔 핸들러, §7-1)으로 전파된다.
+- **동시성 모델 비교(v4 대비)**: v4(Bottle)는 "요청당 스레드 1개"(`threading.Thread(daemon=True)`, 관리 안 되는 무제한 스레드)였다. v5는 **고정 크기 스레드풀(2개)**로 바뀌었다 — 이는 REQ-029(자원남용 방어)의 직접적 요구다: 익명 다수가 동시에 업로드하더라도 실제로 CPU를 쓰는 변환 작업은 최대 2건까지만 동시 실행되고, 나머지는 DB에 PENDING으로 대기하며(간이 큐), 대기가 20건을 넘으면 신규 업로드 자체를 503으로 거절한다(§5).
 
 ---
 
 ## 5. 비기능 요구사항
 
-> 02단계 §5 KPI를 설계 수준의 구체적 목표·측정 지점으로 옮긴다. 실측/검증 자체는 06~08단계 몫이다.
+> v4 §5의 변환 품질 KPI(성공률/텍스트보존/표보존/처리시간/크래시율)는 그대로 유효(핵심 로직 불변). 아래는 **웹 서비스 계층에 새로 추가되는 목표**다(02 §5-2와 연결).
 
-| 항목 | 목표 | 측정 지점(설계상 근거) |
+| 항목 | 목표 | 근거/측정 지점 |
 |---|---|---|
-| 변환 성공률 | ≥95% (알려진 한계 케이스는 "정상 실패 안내"까지 포함해 100%) | `ConversionResult.success` 또는 `errors`가 사용자 메시지로 매핑되는지를 06단계 테스트 코퍼스로 측정 |
-| 텍스트 보존 정확도 | ≥98%(표준 완성형 한글 기준) | `ConversionStats.chars_extracted` 대비 `chars_replaced_with_placeholder` 비율 |
-| 표 구조 보존율 | ≥80%(병합 없는 단순 표), 병합 표는 "정상 손상 안내" 여부로만 판정 | `ConversionStats.tables_preserved_fully` / `tables_detected` |
-| HWPX 뷰어 호환성 | 명시한 지원 버전 범위 내 100% | REQ-008, `HWPX_MIN_SUPPORTED_VERSION` 상수 — 정확한 버전 번호는 §8 "확인 필요" |
-| 처리 시간 | A4 10p+이미지 3장, OCR 미사용 시 ≤10초 | `ConversionStats.elapsed_seconds`, 06단계 벤치마크 |
-| 미처리 예외/크래시율 | 0% | 4-2절 예외 계층 + 최상위 `except Exception` 방어선 |
+| **업로드 파일 크기 상한** | **50MB** (REQ-029, DEC-030) | 02-planning 예시치(500MB)를 **그대로 쓰지 않고 하향 조정**했다 — 근거: Render 무료 웹 인스턴스의 메모리는 넉넉하지 않고(수백MB급으로 추정, §8-3 확인 필요), 이미지가 포함된 PDF는 파싱 중 원본 대비 3~5배의 메모리를 소비할 수 있어(pdfplumber/pypdf/Pillow가 압축 해제된 픽셀 버퍼를 메모리에 올림) 500MB 업로드 1건이 단일 워커 프로세스 전체를 다운시킬 수 있다(REQ-029의 "한 명의 악용/실수가 전체 서비스를 막지 못하게" 원칙과 직결). 50MB는 관공서 제출용 스캔 문서(수십 페이지, 저~중해상도) 대부분을 커버하는 수준이며 "이용자가 체감 못 할 정도로 관대한 상한"(02 원칙)에 부합한다고 판단했다. `Content-Length` 헤더를 본문을 다 읽기 전에 먼저 검사해(`ContentLengthLimitMiddleware`, §6-4) 초과 요청은 즉시 413으로 끊는다 |
+| **변환 처리 소프트 타임아웃** | **5분(300초)** | 폴링 응답에서 "생성 후 5분 경과 + 아직 완료 안 됨"이면 사용자에게 "처리 시간이 오래 걸리고 있습니다. 잠시 후 다시 시도해주세요."를 안내(하드 강제종료는 하지 않음, §4-4/§8-1 한계 명시). OCR 미사용 시 목표(≤10초, v4 §5)의 30배 여유를 둔 안전핀 수준 |
+| **동시 변환 처리 수** | **최대 2건 동시 실행**, 대기열 20건 초과 시 신규 업로드 거절(503) | ThreadPoolExecutor(max_workers=2) + DB PENDING 카운트(§4-4). 단일 워커 프로세스의 CPU를 소수 작업에 집중시켜 "한 사람의 폭주가 전체를 막는" 상황을 차단(REQ-029) |
+| **(주의, 성능 기대치 명확화)** "동시 실행"의 실제 의미 | 진짜 병렬 가속이 아니라 요청격리+처리량 상한 | CPython GIL 때문에 스레드 2개가 각각 CPU 바운드(파싱/렌더링) 작업을 수행해도 코어 여러 개를 동시에 쓰는 진짜 병렬 처리는 아니다(C 확장 일부 구간에서만 GIL이 잠깐 풀림) — "max_workers=2"의 실질 목적은 (a) 변환 작업이 HTTP 요청-응답 스레드를 절대 막지 않게 격리하는 것과 (b) 동시에 CPU를 점유하는 변환 작업 수 자체를 상한선 아래로 강제하는 것이지, 처리 속도를 2배로 만드는 것이 아니다. 구현자가 이 차이를 오해해 "더 빠르게 하려고 max_workers를 늘리면 된다"고 판단하지 않도록 명시한다(Render 무료 인스턴스는 통상 vCPU 1개 미만 공유이므로 늘려도 실제 이득이 제한적이다). |
+| **이미지 디컴프레션 상한** | **1억 2,800만 픽셀**(`PIL.Image.MAX_IMAGE_PIXELS`, Django/CLI 진입점에서 전역 1회 설정) | AI-AUTO-WORK의 `WAGTAILIMAGES_MAX_IMAGE_PIXELS` 상수를 그대로 재사용(동일 근거: 디컴프레션 폭탄 방지). **unit-2(`image_extractor.py`) 코드 자체는 수정하지 않는다** — Pillow의 이 값은 프로세스 전역 클래스 속성이라 진입점에서 한 번 설정하면 `Image.open()`/`Image.frombytes()` 경로에 자동 적용된다(정확한 적용 범위는 05/06 구현 시 재확인 필요 — §8-3) |
+| **업로드→다운로드 가능 지연시간** | 목표: OCR 미사용 시 P95 ≤ 30초(업로드 완료~변환 완료), OCR 사용 시 P95 ≤ 3분 | 02 §5-2 KPI 구체화. `ConversionJob.created_at`~`finished_at` 차이로 측정 |
+| **TTL 삭제 이행률** | 100% (§4-3 참고) | 09단계 보안검증에서 실측 |
+| **레이트리밋 임계값** | IP당 시간당 20회 업로드, IP당 동시 진행중 job 2건까지 | §6-3 |
+| **콜드스타트 안내** | Render 무료 플랜 유휴 스핀다운(약 15분) 후 첫 요청은 수십 초 지연 가능 — 04 UX가 로딩 안내 문구를 넣어야 함(§8-2) | 02 §7 "인프라 성능 제약" 리스크 대응 |
 
-**장애 대응(로컬 프로세스 맥락으로 재해석 — 서버형 재시도/서킷브레이커는 해당 없음)**:
-- **페이지 단위 격리(벌크헤드 패턴)**: 한 페이지 파싱/빌드 중 예외가 나도 `orchestrator`가 해당 페이지만 `ConversionWarning(code="PAGE_SKIPPED")`으로 건너뛰고 나머지 페이지는 계속 처리한다 — 문서 전체를 실패시키지 않는 것이 REQ-005(부분 실패 안내)의 설계적 근거다.
-- **OCR 타임아웃**: 페이지당 OCR 처리에 30초 타임아웃을 두고, 초과 시 해당 페이지를 텍스트 없이 이미지만 삽입 + 경고(무한 대기 방지).
-- **재시도**: 출력 파일 쓰기 시 `PermissionError`(다른 프로그램이 파일을 잠근 경우 등) 발생 시 1회, 0.5초 대기 후 재시도 — 그 이상은 사용자에게 오류로 안내(무한 재시도 금지).
-- **확장성/가용성**: 서버가 없는 단일 사용자 로컬 도구이므로 "동시 사용자 수" 개념이 없다. 대신 "동시에 여러 PDF를 배치 변환할 때 한 파일의 실패가 다른 파일에 전파되지 않는다"(REQ-013)는 것이 이 맥락에서의 격리 목표이며, `batch` 명령은 파일 단위로 독립된 `convert()` 호출을 순차 실행한다(멀티프로세싱은 v1 범위 아님 — CPU 코어 활용 최적화보다 정확성/단순성을 우선한 YAGNI 판단, §8).
+**장애 대응(재시도/타임아웃/서킷브레이커)**:
+- **페이지 단위 격리(벌크헤드)**: v4 §5 그대로 유효 — 한 페이지 실패가 문서 전체를 실패시키지 않는다.
+- **OCR 페이지 타임아웃**: v4 §5 그대로(페이지당 30초).
+- **큐 수준 서킷브레이커**: 대기열 20건 초과 시 신규 요청을 503으로 즉시 거절하는 것 자체가 "이 서비스 규모에서 필요한 유일한 서킷브레이커"다 — 외부 서비스 호출이 없는 이 아키텍처(REQ-011)에서는 전통적 의미의(원격 API 장애 감지용) 서킷브레이커가 적용될 대상이 없다(과설계 회피).
+- **재시도**: R2 업로드/다운로드 실패 시 `boto3`의 기본 재시도(지수 백오프, botocore 기본값) 이상으로 커스텀 재시도 로직을 추가하지 않는다(라이브러리 기본값으로 충분, YAGNI).
+- **프로세스 재시작에 따른 job 유실**: Render 배포/재시작(또는 자유 플랜 스핀다운) 시 `PROCESSING` 상태로 멈춘 job은 그대로 고아가 될 수 있다 — v1은 이를 자동 복구하지 않고, 사용자가 재시도(재업로드)하면 되는 수준으로 허용한다(§8-1에 명시적 트레이드오프로 기록). TTL 정리(cleanup.py)가 `created_at` 기준으로 오래된 PENDING/PROCESSING job도 함께 정리해 DB에 좀비 행이 무한히 쌓이는 것은 방지한다.
 
 ---
 
 ## 6. 보안 설계 원칙
 
 ### 6-1. 인증/인가
-**해당 없음.** 배포형태가 로컬 전용으로 확정(DEC-004)되어 있어 다중 사용자·원격 접근 개념이 없다. 파일 접근 제어는 OS 파일 권한에 위임한다.
 
-### 6-2. 개인정보 처리 원칙 (01단계 5-2/5-3절 규제 발견사항과 교차 확인 — 필수 명시)
-- **처리 주체와 위치**: PDF에 포함될 수 있는 개인정보(성명, 주민등록번호, 연락처, 계약 조건, 병력 등 — 관공서 서식·스캔 신분서류 특성상 포함 가능성이 낮지 않음, 01보고서 5-2절)는 **사용자 본인의 로컬 컴퓨터 안에서만** 메모리/임시 디렉터리에 존재하며, 애플리케이션이 이를 어떤 형태로든 외부 서버로 전송하지 않는다(REQ-011, unit-9 `net_guard`로 기술적으로 강제). 이 설계에서는 서버가 없으므로 애초에 개인정보처리자 지위(수집·처리자)가 발생하지 않는다(01보고서 5-2절 결론과 일치).
-- **수집 최소화**: 애플리케이션은 변환에 필요한 최소 정보(입력 PDF의 파일 경로, 출력 대상 경로)만 다룬다. 사용자 계정 생성, 이메일 수집, 원격 분석(텔레메트리) 등 **어떤 형태의 사용자 식별 정보 수집도 하지 않는다** — 이는 REQ-011의 "100% 로컬 처리" 정신을 문자 그대로의 PDF 전송 금지를 넘어 텔레메트리 비수집까지 확장 적용한 설계 결정이다(§8에 트레이드오프로 기록).
-- **보관 기간과 파기**:
-  - PDF 원문·추출된 텍스트/이미지/표 데이터(IR)는 변환이 끝나는 즉시 메모리에서 해제되며, 어떤 파일로도 영속화되지 않는다.
-  - 변환 중 생성되는 임시 파일(OCR 중간 산출물 등)은 `tempfile.TemporaryDirectory()`의 `with` 블록 스코프로 관리해, 변환 성공·실패·예외 발생과 무관하게 **함수 종료 시 즉시 삭제**된다(3-2절).
-  - `logs/pdf-to-hwpx.log`에는 PDF 본문 텍스트를 남기지 않는다 — 파일명(전체 경로가 아닌 basename만, 예: `계약서.pdf`가 아니라 해시화된 식별자 또는 순번을 권장), 페이지 수, 오류 코드, 처리 시간만 기록한다(REQ-019 "개인정보 미포함" 조건의 구체적 구현). **파일명 자체에 개인정보가 담길 수 있다는 점**(예: `주민등록증_홍길동.pdf`)을 인지해, 로그에는 기본적으로 파일명 대신 세션 내 일련번호(`doc#1`)를 쓰고, 전체 경로/원본 파일명은 `--verbose` 모드에서만(사용자가 명시적으로 상세 로그를 요청한 경우에만) 남긴다.
-  - `settings.json`의 "최근 변환 파일 목록"은 경로 문자열을 담으므로 같은 이유로 민감할 수 있다 — GUI에 "최근 목록 지우기" 기능을 제공한다(REQ-015 최소 GUI 범위 내 저비용 추가로 판단, 과설계 아님).
-- **제3자 제공**: 없음. 유일한 외부 상호작용은 REQ-025 후원 링크 클릭(사용자가 능동적으로 클릭했을 때만 OS 브라우저가 여는 정적 URL 이동)이며, 이때도 애플리케이션이 사용자 식별 정보나 클릭 추적 파라미터를 URL에 붙이지 않는다(4-4절).
-- **고유식별정보(주민등록번호 등) — OCR 경로 특별 고지(REQ-014 연계)**: 01보고서 5-2절은 "고유식별정보를 서버에서 구조화·추출하면 별도 근거가 필요할 수 있다"고 지적했다. 본 설계는 OCR을 Tesseract로 **완전 로컬 실행**하도록 고정해(unit-12, DEC-010) 이 문제를 원천 회피한다 — OCR으로 주민등록번호가 인식되더라도 그 처리자는 사용자 본인이며 어떤 시점에도 외부로 전송되지 않는다.
+- **일반 사용자: 인증 없음(완전 익명, DEC-023).** 업로드/변환/다운로드 어디에도 로그인이 없다. 대신 `job_id`(UUID v4, 128비트 엔트로피)가 사실상의 **capability token**(소지 기반 접근 제어) 역할을 한다 — 이 UUID를 아는 사람만 해당 job의 진행률 조회·다운로드가 가능하다. 따라서 **`job_id`는 애플리케이션 로그에 평문으로 과다 노출하지 않는다**(예: 접속 로그의 URL 경로에는 불가피하게 남지만, 별도 애플리케이션 로그에 추가로 재기록하지 않음).
+- **운영자: Django 표준 admin(`django.contrib.admin`) + `admin_auth.py` 레이트리밋 패턴(AI-AUTO-WORK 재사용).** 슈퍼유저 1개 계정만 존재(배포 시 `build.sh`의 `ensure_superuser` 부트스트랩, 최초 배포 후 환경변수 삭제 권장 — AI-AUTO-WORK 패턴 그대로). 이 관리자 화면은 **일반 사용자에게 노출되지 않으며 04단계 UX 설계 범위가 아니다**(벤더 기본 제공 화면, AI-AUTO-WORK 03단계가 이미 확립한 원칙 재적용).
+- **CSRF**: 업로드 폼은 같은 오리진에서 렌더링된 HTML 폼을 통해서만 제출되므로 Django 표준 `CsrfViewMiddleware`를 그대로 적용한다(예외 처리 불필요 — v4가 Bottle에서 직접 만들어야 했던 것과 달리 Django는 기본 제공).
 
-### 6-3. 네트워크 차단 (REQ-011의 기술적 강제, unit-9)
-- `net_guard.install()`을 GUI/CLI 양쪽 진입점의 최초 실행 라인에서 호출한다. 구현은 `socket.socket.connect`/`connect_ex`를 몽키패치해 호출 시 `NetworkAccessBlockedError`를 던지고 로그에 남기는 **디펜스-인-뎁스** 방식이다(단순히 "네트워크 라이브러리를 의존성에 안 넣었다"는 것보다 한 단계 더 강한 보장 — 09단계 보안검증에서 실제 트래픽 캡처로 재검증 예정).
-- 이 차단은 후원 링크(`webbrowser.open`)에는 적용되지 않는다 — `webbrowser.open`은 OS 기본 브라우저를 별도 프로세스로 띄우는 것이라 애플리케이션 자체의 소켓 호출이 아니기 때문이다. 이 경계를 설계서에 명시해 09단계가 "왜 후원 링크는 net_guard에 안 걸리는가"를 결함으로 오판하지 않게 한다.
+### 6-2. 개인정보 처리 원칙 (v4 §6-2를 공개 서비스 전제로 전면 재작성 — 01보고서 5-2/5-3절, DEC-021/022/023 교차 확인)
 
-### 6-4. 의존성 공급망
-- `requirements.txt`에 정확한 버전을 고정(pin)한다. 가능하면 `pip install --require-hashes`로 해시 검증까지 적용을 권장한다(구체 적용은 05 구현 시).
-- 오픈소스 공개(DEC-006) 전제이므로, 의존성 CVE·라이선스 스캔은 09단계(보안검증) 범위에서 다시 확인한다 — 이 설계서는 §2-2에서 초기 라이선스 조사만 수행했다.
+- **처리 주체 지위의 근본적 변화**: v4는 "서버가 없으므로 개인정보처리자 지위가 발생하지 않는다"고 명시했다. **이 결론은 더 이상 성립하지 않는다** — 이제 이 서비스 운영자가 개인정보보호법상 개인정보처리자에 해당할 가능성이 높다(DEC-021). 아래 원칙은 그 전제 위에서 설계됐다.
+- **수집 최소화(스키마 수준 강제, §3-2)**: 회원가입·이메일·사용자 식별자를 전혀 수집하지 않는다(DEC-023). 원본 파일명은 서버에 저장하지 않는다(DEC-036). 클라이언트 IP는 DB에 영속 저장하지 않고 레이트리밋 목적으로만 LocMemCache(휘발성, 프로세스 재시작 시 소멸)에서 짧게 다룬다.
+- **보관기간과 파기(REQ-028의 구체 구현)**:
+  - PDF 원문·변환 결과 파일(R2 오브젝트): **업로드 시점으로부터 최대 60분**(DEC-029) 내 삭제. 다운로드가 완료되면 그 즉시 삭제(§4-4), 다운로드하지 않고 방치된 job은 60분 경과 시 `cleanup.py`의 지연 스윕(lazy sweep)이 삭제한다.
+  - **지연 스윕(lazy sweep) 설계**: 별도 상시 실행 프로세스(cron/Celery beat)를 두지 않는다(§2-1 근거와 동일 — Render 무료 플랜에 상시 백그라운드 프로세스를 무료로 둘 방법이 마땅치 않음). 대신 **매 HTTP 요청 처리 중 낮은 확률/쿨다운으로 트리거되는 경량 정리 작업**(`core/middleware.py`에 훅, 최근 실행이 5분 이내면 스킵하는 캐시 락으로 오버헤드 제한)이 `created_at < now-60min`인 미삭제 job을 배치(최대 20건)로 정리한다. **이 방식의 한계**: 트래픽이 전혀 없는 시간대에는 스윕이 지연될 수 있다 — 이를 보완하는 **2차 방어선(백스톱)으로 Cloudflare R2 버킷 자체의 오브젝트 라이프사이클 규칙(예: 24시간 후 자동 만료)을 설정**한다(§8-3 배포 단계 확인 필요 항목 — R2 라이프사이클 규칙의 정확한 설정 방법은 실제 버킷 생성 시점(10~12단계)에 확정). 앱 로직(60분 목표)과 플랫폼 백스톱(24시간 하드 리밋)의 이중 구조로 "TTL 삭제 이행률 100%"(02 §5-2 KPI) 미달 리스크를 낮춘다.
+  - `ConversionJob` DB 행 자체(식별정보 없는 운영 메타데이터)는 30일 후 하드 삭제(§3-2).
+- **제3자 제공**: 없음. Render/Neon/Cloudflare는 "제3자 제공"이 아니라 **처리위탁(수탁자)** 관계로 보는 것이 정확하다(01보고서 5-2절이 지적한 "처리위탁 계약 검토 필요"가 여기 해당 — DEC-021의 법률자문 권고 대상). 클라우드 LLM/OCR API 등 실제 제3자 서비스로의 전송은 여전히 하지 않는다(REQ-011/020, unit-9 화이트리스트로 기술적 강제, §6-3).
+- **국외이전**: §2-3에서 확정한 대로 **무조건 발생**하며 REQ-030 개인정보처리방침에 고지한다.
+- **고유식별정보(OCR 경로)**: v4 §6-2의 논리(Tesseract를 서버 프로세스 내부에서만 실행, 외부 OCR SaaS로 전송하지 않음)는 그대로 유효하다 — 단 "로컬"의 의미가 "사용자 PC"에서 "우리가 운영하는 서버 프로세스"로 바뀌었을 뿐이며(02 REQ-014 비고), 이는 곧 서버 운영자가 이 데이터에 대해 사실상 접근 가능하다는 뜻이므로(비록 60분 내 삭제되더라도) 개인정보처리방침에 "OCR 처리 중 고유식별정보가 일시적으로 인식될 수 있음"을 명시한다.
+- **로그(§7-1과 연동)**: PDF 본문, 파일명, IP를 애플리케이션 로그에 남기지 않는다. `job_id`(UUID)와 처리 단계(stage)·오류 코드 수준만 남긴다.
 
-### 6-5. LLM/AI 기능 관련
-REQ-020(LLM/VLM 레이아웃 복원)은 02단계에서 Out-of-Scope로 확정됐다. 본 설계서는 그 결정을 그대로 승계하며, 규칙 J가 요구하는 4개 안전장치(프롬프트 인젝션 방어 등)는 **적용 대상 기능이 아예 없으므로** 이 설계서에 포함하지 않는다(의도적 제외, traceability.md에도 동일하게 기록됨).
+### 6-3. 네트워크 통제 (REQ-011의 기술적 강제, unit-9 — v4 대비 완전 역할 반전)
+
+- **v4(폐기)**: "아웃바운드 전면 차단 + 인바운드 127.0.0.1 고정 바인딩". 둘 다 공개 서비스 전제에서는 성립할 수 없다(서버가 DB/스토리지에 나가야 하고, 공개 포트로 들어오는 요청을 받아야 한다).
+- **v5(DEC-033, 신규)**: `core/net_guard.py`가 `socket.create_connection`을 몽키패치해, 접속하려는 목적지 호스트가 **허용목록(Neon `DATABASE_URL`의 호스트, R2 `R2_ENDPOINT_URL`의 호스트, 그리고 Render 자체 헬스체크/DNS 등 플랫폼 필수 트래픽)**에 있을 때만 통과시키고, 그 외 목적지는 `NetworkAccessBlockedError`로 차단한다. 허용목록은 하드코딩이 아니라 **기동 시 환경변수(`DATABASE_URL`, `R2_ENDPOINT_URL`)에서 호스트명을 파싱해 동적으로 구성**한다(계정 분리 원칙 DEC-027과도 맞음 — 어느 환경에 배포되든 그 환경의 실제 DB/스토리지만 허용됨).
+- **존재 이유**: 이 화이트리스트는 "코드에 실수로 클라우드 LLM/OCR API 호출을 추가하는 것"에 대한 **디펜스-인-뎁스**다 — 정책(REQ-020 Out-of-Scope, REQ-011 처리목적 외 재전송 금지)만으로는 나중에 어떤 기여자(오픈소스 공개, DEC-006)가 실수로 또는 의도치 않게 제3자 API 호출 코드를 추가해도 잡아내지 못하지만, 이 기술적 강제는 코드 리뷰 없이도 즉시 차단한다.
+- **알려진 한계(정직하게 명시)**: 이 몽키패치는 파이썬 `socket` 모듈을 경유하는 호출(예: `urllib3`/`requests`/`boto3` — R2 접근이 여기 해당)만 가로챈다. `psycopg[binary]`는 `libpq`(C 라이브러리)가 자체적으로 소켓 syscall을 수행하므로 **이 몽키패치를 우회한다** — 다만 Neon은 애초에 허용 대상이므로 우회되어도 보안 저하는 아니다(차단하려던 대상이 아니라 허용하려던 대상이 우회 경로로 통과할 뿐). 이 한계가 실제로 문제가 되는 경우는 "향후 어떤 의존성이 C 확장으로 소켓을 직접 열어 허용되지 않은 목적지로 나가는" 시나리오이며, 이 설계는 그 시나리오까지 막지는 못한다(디펜스-인-뎁스의 한 겹일 뿐, 유일한 방어선이 아님 — REQ-020 Out-of-Scope 정책·코드 리뷰가 나머지를 담당). 09단계 보안검증이 이 한계를 알고 점검해야 한다.
+- **인바운드**: 더 이상 이 unit의 책임이 아니다. 공개 포트 바인딩(`0.0.0.0:$PORT`)은 Django/gunicorn의 표준 동작이고, TLS 종단·라우팅은 Render가 담당한다(AI-AUTO-WORK와 동일). 대신 인바운드 측 방어는 **레이트리밋(unit-23)**과 **업로드 크기 제한(unit-24)**이 담당한다(§6-4).
+- 후원 링크(REQ-025)는 v4와 동일하게 이 화이트리스트의 적용 대상이 아니다(브라우저가 여는 것이지 서버 프로세스가 소켓을 여는 것이 아님).
+
+### 6-4. 레이트리밋/캡차 (REQ-026, DEC-032)
+
+- **클라이언트 IP 판별(선행 전제, 중요)**: Render는 리버스 프록시로 요청을 중계하므로, 아무 조치 없이 `request.META['REMOTE_ADDR']`를 읽으면 실제 사용자 IP가 아니라 Render 엣지의 내부 IP가 잡혀 **모든 사용자가 하나의 버킷을 공유하게 되고, 결과적으로 레이트리밋이 사실상 무력화**된다(한 명의 요청 폭주가 즉시 전체 사용자를 429로 막아버리는 정반대의 장애로 이어질 수도 있다). 따라서 `webapp/config/middleware.py::XForwardedForMiddleware`(AI-AUTO-WORK 원본 그대로 재사용 — `X-Forwarded-For` 헤더의 **rightmost 값**만 신뢰해 `REMOTE_ADDR`을 재설정, 클라이언트가 보낸 leftmost 값은 조작 가능하므로 무시)를 `MIDDLEWARE`에 **production 설정에서만** 등록하는 것이 REQ-026의 필수 선행 조건이다(dev 로컬 실행은 Render 엣지라는 전제 자체가 없으므로 등록하지 않는다). 이 미들웨어가 뷰보다 먼저 실행되기만 하면 되므로 `MIDDLEWARE` 리스트 내 정확한 순서는 크게 중요하지 않으나, 관례상 최상단 근처에 둔다.
+- **IP 기반 고정 윈도우 카운터**: `converter/ratelimit.py`가 `admin_auth.py`의 `is_rate_limited(ip)` 패턴(LocMemCache `cache.incr`)을 그대로 재사용한다. **임계값**: IP당 시간당 20회 업로드 시도, 초과 시 HTTP 429("요청이 너무 많습니다. 잠시 후 다시 시도해주세요."). 추가로 IP당 **동시 진행중(PENDING+PROCESSING) job 2건**을 넘는 신규 업로드는 즉시 거절(같은 사람이 여러 탭으로 큐를 독점하는 것 방지).
+- **`Content-Length` 사전 검사(REQ-029)**: `core/middleware.py`의 `ContentLengthLimitMiddleware`를 `SecurityMiddleware`보다도 앞단에 두어, 본문을 실제로 다 읽기 전에 헤더만으로 50MB 초과 요청을 413으로 즉시 거절한다(불필요한 메모리/대역폭 소모 자체를 회피).
+- **캡차(hCaptcha, 사전 선정만 하고 v1 구현은 보류)**: 02-planning REQ-026 원문이 "IP 레이트리밋 + **필요시** 캡차"로 조건부 표현을 썼다는 점에 근거해, v1은 IP 레이트리밋만 구현한다. 캡차 도입 시 채택할 서비스는 **hCaptcha(무료 티어 존재, reCAPTCHA 대비 제3자 트래킹 성격이 상대적으로 약함)**로 사전 선정해두되, 실제 통합(HTML 위젯 삽입, 서버측 검증 호출)은 배포 후 실제 오남용 패턴이 관측되면 그때 추가한다(과설계 회피 — "지금 필요한 것"과 "나중에 필요할 수도 있는 것"의 명시적 구분, §8-1). hCaptcha 채택 시에는 그 자체가 제3자 서비스 호출이 되므로 §6-3의 아웃바운드 화이트리스트에 hCaptcha 검증 API 호스트를 추가해야 한다는 점을 후속 작업 메모로 남긴다.
+
+### 6-5. 의존성 공급망 — v4 §6-4 원칙 유지, 신규 의존성(§2-2)도 동일하게 버전 고정·CVE 스캔은 09단계 확인
+
+### 6-6. LLM/AI 기능 관련 — v4 §6-5 그대로, 변경 없음(REQ-020 Out-of-Scope 유지)
 
 ---
 
 ## 7. 운영/관측성
 
-> 중앙 서버가 없는 로컬 배포형 도구이므로, "서버 모니터링 대시보드/중앙 에러율 집계"는 애초에 성립하지 않는다. 아래는 그 제약을 인정한 위에서 설계한 로컬 관측성이다.
-
 ### 7-1. 로깅
-- `common/logging_setup.py`가 앱 시작 시 `RotatingFileHandler`(maxBytes=5MB, backupCount=5)를 등록한다. 저장 위치는 `platformdirs.user_log_dir("pdf-to-hwpx")` (Windows 기준 `%LOCALAPPDATA%\pdf-to-hwpx\Logs`).
-- 로그 레벨: `INFO`=변환 시작/종료·요약 통계, `WARNING`=REQ-005/007/017/018 등 best-effort 저하 이벤트, `ERROR`=4-2절 예외 발생. 기본 레벨은 `INFO`, `--verbose`/GUI 설정에서 `DEBUG`로 전환 가능.
-- 모든 로그 라인에 앱 버전·Python 버전·OS 정보를 포함해(재현성), 사용자가 GitHub Issue를 등록할 때 그대로 첨부할 수 있게 한다.
-- 6-2절 원칙에 따라 PDF 본문 텍스트나 전체 파일 경로(기본 모드)는 로그에 남기지 않는다.
 
-### 7-2. 크래시 리포트
-- `sys.excepthook`을 후킹해, 처리되지 않은 예외가 프로세스를 종료시키기 직전에 traceback을 `logs/pdf-to-hwpx.log`에 `CRITICAL` 레벨로 기록한다.
-- GUI는 크래시 시 "예상치 못한 오류가 발생했습니다. 로그 폴더 열기 / GitHub Issue 등록하기" 버튼이 있는 오류 다이얼로그를 띄운다. **자동 전송은 하지 않는다** — 사용자가 직접 로그를 확인하고 원하면 수동으로 첨부하는 방식(REQ-011 정신 유지, 6-2절과 일관).
-- CLI는 동일 정보를 표준에러로 출력하고 종료 코드 `2`를 반환한다.
+- **CLI**: v4 그대로(`platformdirs` 기반 로컬 로테이팅 파일 로그, `logging_setup.install()`).
+- **웹(신규)**: Django 표준 로깅(콘솔/stdout, `LOGGING` 커스터마이징 없이 Django 기본값 사용 — AI-AUTO-WORK와 동일한 "과설계 방지" 판단, `django.utils.log.DEFAULT_LOGGING`이 이미 `django.request` 로거에 `mail_admins` 핸들러를 연결해두므로 별도 설정 불필요). Render가 stdout을 수집해 대시보드에서 조회 가능하게 한다(컨테이너 파일시스템에 로그 파일을 쓰지 않는다 — 재시작 시 소실되고 애초에 조회 수단도 없음).
+- `orchestrator.convert()` 내부 로그 호출(`logging.getLogger("pdf_to_hwpx")`)은 웹 경로에서 Django 콘솔 핸들러로 자연스럽게 전파된다(§1-1).
 
-### 7-3. 에러율/장애 알림 채널 (10단계 검증 대비 명시)
-- **중앙 알림 채널 없음**: 서버가 없으므로 Sentry류 중앙 에러 집계는 적용하지 않는다(DEC-003이 이미 확인한 대로 이 프로젝트/세션에는 Sentry 등 MCP 연동도 설정되어 있지 않다).
-- 대신 **오픈소스 공개(DEC-006) 전제 하에 GitHub Issues를 사실상의 "장애 신고 채널"로 채택**한다 — README(unit-10/11단계 문서화 범위)에 이슈 등록 방법과 로그 첨부 방법을 안내한다. 이것이 이 로컬 도구가 가질 수 있는 유일하게 합리적인 "장애 알림 채널"이며, 10단계 배포테스트에서는 "README에 이 채널이 실제로 안내되어 있는지"를 검증 항목으로 삼아야 한다(자동화된 실시간 알림이 아니라 수동 채널이라는 점을 10단계가 오판하지 않도록 여기 명시).
+### 7-2. 에러율/장애 알림 채널 (10단계 검증 대비 — 이번 리비전에서 반드시 실제 채널을 지정)
+
+- **AI-AUTO-WORK의 `ADMINS`+`mail_admins` 패턴을 그대로 재사용**한다(§2-1, 코드 재작성 없이 설정만 이식) — Django 500 에러 발생 시 `DJANGO_ADMIN_EMAIL` 환경변수에 지정된 운영자 이메일로 **자동 즉시 통지**된다. v4의 "중앙 알림 채널 없음, GitHub Issues가 사실상의 장애 신고 채널"이라는 결론은 **더 이상 유효하지 않다** — 공개 서비스는 사용자가 직접 GitHub Issue를 등록해줄 것을 기대할 수 없으므로(v4는 개발자 자신이 유일한 사용자였다), 자동 알림이 필수다.
+- 10단계 배포테스트는 "강제로 500 에러를 유발했을 때 실제로 `DJANGO_ADMIN_EMAIL`로 메일이 도착하는지"를 실측 검증해야 한다(AI-AUTO-WORK 03단계와 동일한 검증 방식 — 그 프로젝트의 10단계 실측 사례를 그대로 절차로 재사용할 것을 권고).
+- GitHub Issues는 부가 채널로는 유지(오픈소스 공개, DEC-006)하되, 주 채널은 이메일 알림이다.
+
+### 7-3. 사용량 모니터링 (경량, AI-AUTO-WORK `core/monitoring.py` 패턴 재사용 여부는 선택적)
+
+- AI-AUTO-WORK의 요청수/응답시간 경량 대시보드(`RequestMetricsMiddleware`+`monitoring.py`)는 **이번 프로젝트에서는 필수는 아니다** — 그 프로젝트의 "무료 티어 유료 전환 4대 기준" 같은 구체적 트리거가 이 프로젝트에는 아직 정의되어 있지 않다(02 §6 "예산 구체 상한"은 A-16으로 사용자 확인 보류 중). 다만 코드 재사용 비용이 매우 낮으므로(미들웨어 1개 파일), **동일 패턴을 그대로 이식해두는 것을 권장 사항으로만 남긴다**(unit-26 배포 준비 단계에서 시간이 남으면 추가, 필수 완료조건은 아님 — §8-2).
 
 ### 7-4. 롤백 전략
-- 배포 산출물은 GitHub Releases에 버전 태그(`v1.0.0` 등)로 게시한다. 특정 버전에서 회귀가 발견되면 사용자가 이전 릴리즈를 재다운로드하는 것이 롤백 수단이다.
-- **자동 업데이트 기능은 v1 범위에 포함하지 않는다** — 자동 업데이트는 필연적으로 앱이 시작 시 외부 서버에 접속해 최신 버전을 조회하는 네트워크 호출을 요구하는데, 이는 6-3절의 "네트워크 차단"·REQ-011의 로컬 원칙과 정면으로 충돌한다. 따라서 이 설계는 자동 업데이트를 의도적으로 배제한다(§8 트레이드오프에 재기술).
+
+- v4의 "GitHub Releases 버전 태그 + 사용자가 재다운로드" 롤백 방식은 **CLI/라이브러리 배포(unit-10/11)에는 계속 유효**하지만, 웹 서비스 자체의 롤백은 **Render의 배포 히스토리 기반 재배포**(이전 성공 빌드로 되돌리기)가 표준 수단이다(AI-AUTO-WORK와 동일 관례). `render.yaml`의 `healthCheckPath: /healthz`가 배포 직후 실패를 감지해 트래픽 전환을 막는 것이 1차 방어선이다.
+- **DB 마이그레이션 롤백**: `ConversionJob` 스키마가 단순하므로(§3-2) 마이그레이션 되돌리기 리스크는 낮다. 다만 컬럼 삭제형 마이그레이션은 항상 "먼저 코드가 그 컬럼을 안 쓰게 배포 → 이후 컬럼 삭제 마이그레이션"의 2단계로 나눠 롤백 가능성을 유지한다(표준 무중단 마이그레이션 관례, 이번 설계서가 처음 도입하는 원칙이므로 명시).
+- **자동 업데이트(v4 §7-4) 관련 서술은 CLI/데스크톱 배포 맥락에서만 유효** — 웹 서비스는 애초에 사용자가 "업데이트"할 대상이 없다(서버가 곧 최신 버전).
 
 ---
 
 ## 8. 기획서 대비 트레이드오프 및 미해결 사항
 
-### 8-1. 트레이드오프(자체 판단으로 결정, 근거와 함께 decisions.md에 기록 — DEC-007~013)
-1. **PyMuPDF(성능/성숙도 우수) 대신 pdfplumber+pypdf(허용적 라이선스) 채택** — AGPL이 프로젝트 라이선스 선택권을 미리 제한하는 것을 피하기 위함. 트레이드오프: 복잡한 레이아웃/대용량 PDF에서 PyMuPDF 대비 파싱 속도·견고성이 낮을 수 있다(01보고서가 인용한 "10~50배 빠르다"는 비교는 미검증이지만 방향성은 참고). 05 구현 단계에서 성능이 KPI(§5, 10초 목표)를 못 맞추면 재검토 대상.
-2. **`python-hwpx` 채택 대신 자체 OWPML 라이터 구현** — 라이브러리 성숙도 미검증 리스크를 설계 단계에서 직접 통제 가능한 리스크로 바꾸기 위함. 트레이드오프: 초기 구현 비용이 더 크다(zip 골격, content.hpf, settings.xml 등을 직접 작성해야 함). 대신 REQ-008의 호환성 요구(6-6/6-8)를 충족하기 위한 통제력을 확보하며, §2-1에서 명시한 "실제 한글이 저장한 빈 문서를 참조 템플릿(fixture)으로 리버스엔지니어링" 전략으로 6-8절의 암묵적 검증 규칙 리스크를 낮춘다.
-3. **Tkinter 채택** — 라이선스·패키징 단순성 우선, 최신 UI 트렌드 대비 디자인 표현력은 제한적(디자이너 관점에서는 04단계 UX 설계 시 Tkinter의 위젯 한계를 감안해야 함 — 04단계에 인수인계할 사항).
-4. **자동 업데이트 기능 배제** — 네트워크 차단 원칙과의 충돌을 피하기 위해 v1에서는 아예 만들지 않는다(7-4절). 향후 "선택적 업데이트 확인(사용자가 명시적으로 버튼을 눌러야만 1회 네트워크 호출)" 형태로 재검토 가능하나, 이는 REQ-011 재해석이 필요해 규칙 A 질문 대상이 될 사안이다.
-5. **취소(Cancel) 버튼 없음** — REQ-015가 요구하지 않고, KPI상 처리시간이 10초 내외로 짧아 우선순위가 낮다고 판단(YAGNI). 사용자 피드백에 따라 배포 후 추가 검토 가능.
-6. **텔레메트리(사용 통계) 완전 배제** — REQ-011이 문자 그대로 요구하지는 않지만(PDF 전송 금지가 원문), "로컬/프라이버시" 가치 제안(02 §3 ①)과의 정합성을 위해 확장 적용. 트레이드오프: 실사용 패턴(어떤 기능이 자주 쓰이는지)을 데이터로 파악할 수 없어, 배포 후 KPI(02 §5 "배포 후 추가 예정" 사용자 지표)는 GitHub Star/이슈/후원 클릭 수 등 외부 관측 가능한 지표로만 근사해야 한다.
-7. **Windows 우선 패키징** — 코드는 크로스플랫폼 유지, 배포(패키징 산출물)만 Windows 우선. macOS/Linux 사용자는 v1에서 소스 실행만 가능(이 자체를 REQ로 등록하지는 않음 — 02 기획서에 "배포 OS 범위"에 대한 REQ가 없었고, 01보고서도 이 프로젝트 사용자층을 국내 개인/관공서 제출자로 좁혔으므로 Windows 집중이 근거 있는 범위 축소라고 판단).
-8. **Tesseract 바이너리 동봉(패키지 크기 증가)** vs 별도 설치 요구 — "무료·개인용 사용성"(02 §3 ②) 가치 제안을 지키기 위해 동봉을 선택했으나, 설치 파일 크기가 커진다(수백 MB대 예상). 사용자가 설치 크기에 민감하면 "OCR 미포함 경량판" 별도 빌드도 고려할 수 있으나 v1 범위에서는 단일 빌드로 단순화한다.
+### 8-1. 트레이드오프 (자체 판단, decisions.md DEC-029~036에 근거와 함께 기록)
 
-### 8-2. 02단계 §9 대비 달라진 점 (1-3절 요약 재기재)
-- unit-15(옛한글), unit-16(수식 근사)을 "기존 unit-1/5, unit-3/6 수정"에서 "신규 별도 파일"로 재설계해 병렬 가능 여부를 "불확실 → 가능(확정)"으로 바꿨다.
-- unit-18(후원 링크)을 "가능(추정)"에서 "불가(확정, 순차)"로 정정했다 — 실제로 GUI/CLI 진입점 파일을 공유 접촉하는 것이 설계 단계에서 드러났기 때문이다.
-- unit-0의 범위를 "PDF 로더"에서 "PDF 로더 + 로컬 로거 + 공통 예외 클래스"로 확장해, 사실상 모든 unit의 공통 선행 단위임을 명시적으로 확정했다(02는 이를 명시하지 않았다).
-- unit-9(네트워크 차단)를 "전역 설정 레지스트리 접촉 가능성 있음(불확실)"에서 "독립 모듈 + 진입점 1줄 호출(공유자원 없음, 병렬 가능 확정)"으로 단순화했다.
+1. **인프로세스 ThreadPoolExecutor(DEC-031) vs Celery/RQ+Redis** — §2-1에서 상술. **알려진 한계**: (a) Python 스레드는 강제 종료가 불가능해 "소프트 타임아웃"만 제공한다(하드 타임아웃이 필요해지면 서브프로세스 격리로 전환하는 업그레이드 경로를 열어둔다). (b) Render 인스턴스 재시작 시 `PROCESSING` 중이던 job은 유실된다 — v1은 자동 복구를 만들지 않고 사용자 재시도로 충분하다고 판단했다(발생 빈도가 낮고, 발생해도 사용자의 피해가 "다시 업로드해야 함" 수준으로 제한적이기 때문). 트래픽/장애 빈도가 실제로 문제가 되면 그때 Redis+RQ(별도 유료 Background Worker 필요)로 전환한다.
+2. **파일크기 50MB(02 예시 500MB보다 하향)** — §5에서 상술. "이용자 체감 없는 관대한 상한"(02 원칙)과 "단일 워커 프로세스의 메모리 보호"(REQ-029) 사이의 균형점을 500MB가 아니라 50MB로 잡았다 — 이는 02가 위임한 재량 범위 안에서의 자체 판단이며, 배포 후 실제로 50MB가 부족하다는 사용자 피드백이 쌓이면 인프라(더 큰 인스턴스)와 함께 재검토 가능하다.
+3. **다운로드를 Django 프록시 스트리밍으로 구현(DEC-036) vs R2 프리사인드(presigned) URL 리다이렉트** — 프리사인드 URL은 대역폭을 Cloudflare 엣지로 넘겨 서버 부담을 줄이는 장점이 있으나, "다운로드 즉시 삭제"(REQ-028)를 문자 그대로 구현하려면 프리사인드 URL의 만료시간과 실제 삭제 시점 사이에 경합(race)이 생겨 로직이 더 복잡해진다(다운로드 시작 시점을 서버가 정확히 알 수 없음). 50MB 상한(트레이드오프 2번) 덕분에 프록시 스트리밍의 부담(요청 스레드 점유 시간)이 제한적이므로, v1은 **단순성**(즉시 삭제 로직이 명확함)을 택했다. 트래픽이 늘어 대역폭이 실제 병목이 되면 프리사인드 URL 방식으로 전환 가능(그때는 "다운로드 후 즉시 삭제"를 "다운로드 가능 시간 만료 후 삭제"로 재정의해야 함 — REQ-028 문구 자체의 재해석이 필요해 규칙 A 질문 대상이 될 사안).
+4. **원본 파일명 서버 미저장, 클라이언트 측 복원(DEC-036)** — 서버 구현이 단순해지고 개인정보 최소화(REQ-030)에도 부합하지만, 자바스크립트가 비활성화된 브라우저나 다운로드 관리 방식에 따라 파일명 복원이 안 될 수 있다(대부분의 현대 브라우저는 정상 동작). 04 UX 설계에 이 제약을 그대로 인수인계한다.
+5. **캡차 미구현(hCaptcha 사전 선정만, DEC-032)** — REQ-026 원문의 "필요시" 조건부 표현에 근거한 의도적 범위 축소. 배포 후 봇 트래픽이 실제로 관측되면 즉시 추가할 수 있도록 기술 선택(hCaptcha)만 미리 확정해뒀다.
+6. **unit-9 net_guard 전면 재작성(DEC-033)** — v4의 구현(존재하지 않음, Not Started)을 그대로 반전 적용하는 것이 아니라 처음부터 새로 설계했다. 재작업 비용은 0이다(애초에 코드가 없었음).
+7. **unit-13 폐기(DEC-034)** — Bottle 의존성 자체를 프로젝트에서 완전히 제거한다(`pyproject.toml`/`requirements.txt` 어디에도 Bottle을 포함하지 않는다). DEC-019(Bottle 채택 근거) 자체가 틀렸던 것이 아니라 **배포 전제(로컬 전용 → 공개 서비스)가 다시 바뀐 것**이므로 DEC-019를 "실수"로 취급하지 않는다(이력 보존, decisions.md에서 대체 표시만).
+8. **PyInstaller 패키징(DEC-011)의 가치 축소** — v1~v4의 "무료·설치 불필요"(02 §3 가치제안②) 실현 수단이 "PyInstaller로 패키징된 데스크톱 실행파일 배포"에서 "그냥 웹사이트 방문"으로 옮겨갔다. CLI(unit-11)가 여전히 존재하지만 이제 운영자/개발자 전용 도구로 재해석됐으므로(02 A-15), PyInstaller로 CLI를 패키징해 배포할 실익이 작아졌다 — **폐기하지는 않되(개발자가 로컬에서 편하게 쓸 수 있는 부가 기능으로는 유효), 더 이상 이 서비스의 핵심 가치제안과 연결되지 않는다는 점을 명시**한다(unit-11 파일범위 자체는 변경 없음, §1-3).
+9. **모니터링 대시보드(AI-AUTO-WORK `core/monitoring.py`) 이식은 선택 사항으로 격하** — §7-3에서 상술.
 
-### 8-3. 미해결 사항 — 사용자 확인 필요 (규칙 A, 임의로 정하지 않음)
-아래 항목은 자체 조사(01보고서)로 근거가 부족하거나, 순수 기술적 판단을 넘어 사용자의 가치 선택이 필요한 사안이라 임의로 확정하지 않았다:
+### 8-2. 04단계(UX 디자인) 인수인계 — 무엇이 바뀌어야 하는가
 
-1. ~~**프로젝트 자체의 오픈소스 라이선스(SPDX 식별자)**~~ — **해소됨(DEC-014, MIT 확정)**. DEC-006은 "오픈소스로 공개한다"까지만 확정했었고, MIT/Apache-2.0/GPL-3.0 중 무엇으로 할지는 미정이었으나 사용자가 **MIT**로 확정 응답했다. §2-2에서 재확인한 대로 채택한 의존성 전체가 MIT와 호환된다. LICENSE 파일 생성은 05단계(스캐폴딩) 또는 11단계(문서화)에서 처리한다.
-2. **실제 후원(기부) 플랫폼과 URL** (REQ-025) — 플랫폼 자체는 **GitHub Sponsors로 확정**(DEC-015)됐다. 다만 **실제 프로필 URL은 05단계 unit-18 착수 시점**(사용자가 실제 GitHub Sponsors 계정을 개설한 뒤)에 확정하기로 했으므로, 그 전까지는 본 설계서대로 `common/constants.py`에 `SPONSOR_URL = "https://example.com/PLACEHOLDER"` 형태의 자리표시자만 유지한다.
-3. **HWPX 지원 대상 버전의 정확한 번호** (REQ-008, 02 §8 A-9) — 01보고서도 이를 "확인 필요"로 남겼고, 본 에이전트는 도구 권한상(Read/Write/Grep/Glob/Bash) 실시간 웹 조사를 할 수 없어 특정 한컴오피스 버전 번호를 임의로 지어내지 않았다. `HWPX_MIN_SUPPORTED_VERSION` 상수는 05/06단계에서 실제 한컴오피스(또는 한컴 뷰어) 여러 버전에 생성물을 직접 열어보며 실측 확정하는 것을 권고한다 — 이는 사용자 확인이 아니라 **구현 단계의 실측 작업**으로 처리 가능하므로 지금 당장 진행을 막지는 않는다.
+v4까지의 `04-ux-design.md`는 "로컬 웹서버(127.0.0.1), 단일 사용자, Bottle 4라우트" 전제로 작성되어 있다. 04단계 리비전이 반드시 반영해야 할 사항:
 
-1번은 DEC-014로 완전히 해소되어 더 이상 미해결 사항이 아니다(이력 보존을 위해 취소선으로만 남긴다). 2번은 플랫폼 선택은 해소됐고 URL 값만 REQ-025 UI 착수(05단계 unit-18) 이전에 확정하면 되며, 3번은 착수를 막지 않는다.
+1. **완전 익명 다중 사용자 전제**: "내 최근 변환 목록", "재열기" 같은 개인화 UI는 존재할 수 없다(계정 자체가 없고, 서버가 파일명조차 저장하지 않음, §3-2). 각 사용자는 자신의 브라우저 세션 동안만 자신의 `job_id`를 알고 있다.
+2. **진행률 폴링 UI는 유지되나 "동시에 여러 사용자가 각자 다른 진행 상태"일 수 있음을 반영**: 화면 자체는 v4와 동일하게 1인칭 시점(내 job의 진행률)이면 되지만, "서버가 바쁩니다"(대기열 포화, §5)·"레이트리밋 초과"(§6-4)·"콜드스타트로 첫 응답이 느릴 수 있음"(§5) 같은 **v4에는 없던 새로운 에러/대기 상태**에 대한 화면 문구가 추가로 필요하다.
+3. **관리자 화면 없음(일반 사용자 관점)**: Django 표준 admin은 04 UX 범위 밖이다(§6-1) — 04는 오직 업로드/진행률/다운로드/오류/개인정보처리방침 5개 화면(또는 그 이하)만 설계하면 된다.
+4. **다운로드 파일명 복원 인터랙션(§3-2, 트레이드오프 4번)**: 클라이언트 JS가 원본 파일명을 기억했다가 다운로드 완료 시 저장명으로 재적용하는 인터랙션을 화면 설계에 반영해야 한다.
+5. **개인정보처리방침 링크 노출 위치**: 업로드 화면 하단(또는 헤더)에 상시 노출해야 한다(REQ-030) — 규제 민감 문구이므로 "추후 반영"으로 미루지 않는다.
+6. **후원 링크(REQ-025) 노출 위치**: v4와 동일하게 정적 `<a>` 링크, 위치만 새 템플릿(`converter/templates/converter/index.html`)으로 이동.
+7. **"127.0.0.1 전용이라 보안 걱정 없음"이라는 v4의 안심 문구는 전부 삭제**해야 한다 — 이제 실제 공개 인터넷 서비스이므로 HTTPS 자물쇠 표시 등 표준 웹 신뢰 신호(Render가 기본 제공하는 관리형 TLS)에 대한 설명으로 대체 검토.
+
+### 8-3. 미해결 사항 — 확인 필요 (규칙 A, 임의로 정하지 않음)
+
+1. **Render 무료 플랜의 정확한 리소스 한도(RAM/CPU, Background Worker 무료 제공 여부)** — 이번 세션은 실시간 웹 조사 권한이 없어(Read/Grep/Glob/Bash만 보유) 확정하지 못했다. §2-1의 DEC-031(인프로세스 스레드풀 채택) 자체는 "Background Worker 무료 미제공"이라는 가정 위에서도, 제공된다는 것이 확인되더라도 "더 나쁜 선택"이 되지 않는(단순한 v1 선택) 결정이라 착수를 막지 않는다. **10~12단계(실제 계정 개설) 착수 전 반드시 재확인.**
+2. **Render/Neon의 정확한 리전 목록(싱가포르 포함 여부)** — §2-3. 최종 리전 선택과 무관하게 "국외이전 고지 필요"라는 결론(REQ-030)은 바뀌지 않으므로 착수를 막지 않는다.
+3. **HWPX 지원 대상 버전의 정확한 번호** — v4 §8-3 항목 3 그대로 미해결 유지(변경 없음, 배포형태와 무관한 사안).
+4. **hCaptcha 실제 도입 시점** — §6-4, "필요시"의 구체적 트리거(예: 일일 429 발생 건수 N회 초과) 자체는 아직 정의하지 않았다 — 배포 후 실측 데이터를 보고 운영자가 판단할 사안으로 남긴다(지금 임의로 숫자를 정하면 오히려 근거 없는 확정이 된다).
+5. **서버 호스팅 예산 상한(02 A-16)** — 02가 사용자 가치판단 영역으로 남긴 것을 그대로 승계한다. 본 설계는 "무료 플랜에서 시작 가능한 구조"(Redis 없음, 별도 유료 워커 없음)로 설계했으나, 실제 운영 중 무료 한도를 넘는 시점의 예산 승인은 여전히 사용자 확인 필요 사안이다.
 
 ---
 
@@ -456,13 +455,41 @@ REQ-020(LLM/VLM 레이아웃 복원)은 02단계에서 Out-of-Scope로 확정됐
 
 | 일시 | 버전 | 변경 내용 | 사유 |
 |---|---|---|---|
-| 2026-09-27 | v0 | 초안 작성 (9개 섹션 전체, 작업단위 확정표 포함) | 3단계 최초 작성 |
-| 2026-09-27 | v1 | 1차 내부검증 결함 반영 수정 (`verify-log_03-system-design.md` 1차 참고: GUI 스레드 안전성 미명시, HWPX 컨테이너 참조 템플릿 전략 미기재, net_guard와 후원링크 webbrowser.open의 관계 미기재 등 보완) | 규칙 B 1차 검증 |
-| 2026-09-27 | v2 | 2차 내부검증(구현자 관점) 결함 반영 수정, 최종본 확정 (`verify-log_03-system-design.md` 2차 참고: 엣지케이스 목록 표로 정리, 예외 계층에 EmptyPdfError/TesseractNotFoundError 추가, ConversionOptions에서 우선순위 정책이 비-옵션임을 명시) | 규칙 B 2차 검증, PASS 확정 |
-| 2026-09-27 | v3 | 사용자 확정 답변(DEC-014: 프로젝트 라이선스 MIT, DEC-015: 후원 플랫폼 GitHub Sponsors) 반영. §8-3 미해결사항 1번을 해소 처리, 2번을 "플랫폼 확정/URL만 unit-18 착수 시 결정"으로 정리, §2-1/§2-2에 "프로젝트 자체 라이선스: MIT" 명시 및 전체 의존성 호환 재확인, LICENSE 파일 생성은 05/11단계로 위임 명시, §2-1 pdfplumber 선정 근거 서술을 확정 이후 시점으로 갱신 | 오케스트레이터가 기록한 사용자 응답(DEC-014/015) 반영, 추가 검증 PASS |
+| 2026-09-27 | v0~v2 | 초안 작성 및 1·2차 내부검증, PASS 확정 | 3단계 최초 |
+| 2026-09-27 | v3 | DEC-014(MIT)/DEC-015(GitHub Sponsors) 반영 | 사용자 확정 답변 |
+| 2026-09-27 | v4 | DEC-018 리비전: GUI를 Tkinter → 로컬 웹서버(Bottle, 127.0.0.1)+브라우저 UI로 전환 | 사용자 요청 |
+| 2026-09-28 | **v5** | **DEC-020~028 대규모 리비전 — "로컬 전용 1인 도구"→"공개 웹 변환 서비스"로 근본 전환.** §1(아키텍처 개요 전면 재작성, Django/webapp 계층 신설, 작업단위 확정표에 unit-19~26 확정 및 unit-9/13 v5 처리 반영), §2(웹 계층 신규 스택·라이선스·ToS 확인, 인프라 리전/국외이전 판단 신설), §3(`ConversionJob` 모델 신규, IR은 변경 없음 재확인), §4(핵심 라이브러리 API 변경없음 재확인 + 웹 API 계약 전면 재작성), §5(파일크기 50MB/타임아웃 5분/동시처리 2건 등 구체 수치 확정), §6(개인정보 처리 원칙 전면 재작성, net_guard 역할반전, 레이트리밋/캡차 확정), §7(장애알림을 GitHub Issues에서 Django ADMINS 이메일 자동알림으로 전환), §8(트레이드오프 9건, 04단계 인수인계 7건, 미해결 5건), §10(신규 — traceability.md 설계매핑 제안). **핵심 변환 로직(`pdf_to_hwpx/` 패키지, unit-0~8/12/15~18)은 이번 리비전으로 단 한 줄도 변경되지 않음**(§0 전제). `decisions.md`에 DEC-029~036 신규 기록(TTL/자원상한/비동기큐기술/레이트리밋/unit-9,13 처리/인프라리전/다운로드방식·파일명 미저장). `traceability.md`는 이번 호출에서 직접 수정하지 않음(§10 제안을 오케스트레이터가 반영). | 사용자의 신규 요구사항 변경(규칙 F와 유사하나 결함 수정이 아니라 명시적 요구사항 변경) — `docs/harness/decisions.md` DEC-020~036, `02-planning.md` v5 |
+| 2026-09-28 | v5(1차 내부검증 정정) | 1차 내부검증(작성자 관점)에서 발견한 4건 결함 수정: (1) `config/middleware.py::XForwardedForMiddleware`(AI-AUTO-WORK 원본 재사용) 누락 — REQ-026 레이트리밋이 Render 리버스프록시 뒤에서 REMOTE_ADDR 정규화 없이는 사실상 무력화되는 문제를 §1-2/§1-3(unit-19/23)/§6-4에 명시 추가. (2) `socket.create_connection` 몽키패치(unit-9)가 `psycopg`(libpq, C 라이브러리)를 우회한다는 알려진 한계를 §6-3에 명시(보안 저하는 아님 — 우회되는 대상이 애초에 허용 대상인 Neon이므로). (3) ThreadPoolExecutor "동시 2건 실행"이 GIL로 인해 진짜 병렬가속이 아니라는 점을 §5에 명시해 구현자의 성능 기대치 오해를 예방. (4) `GET /download/<job_id>/` "완료+실패" 응답의 HTTP 상태코드가 미정의였던 것을 422로 확정(§4-4). | 규칙 B 1차 내부검증(작성자 관점) — 상세 근거는 `verify-log_03-system-design.md` v5 절 참고 |
+
+---
+
+## 10. traceability.md 설계 매핑 제안 (오케스트레이터 반영 대기 — 본 설계서는 traceability.md를 직접 수정하지 않았다)
+
+> 02-planning.md v5 §11이 이미 REQ-001/010/011/013/014/015/019/020/021 문구 갱신과 REQ-026~030 신규 발급을 제안해뒀다. 아래는 그 위에 **"설계 매핑(설계서 §)" 컬럼만** 채우는 추가 제안이다. unit-0~4의 구현상태/단위테스트 컬럼은 절대 언급·수정 대상이 아니다(반복 강조).
+
+| REQ-ID | 제안하는 "설계 매핑(설계서 §)" 값 | 비고 |
+|---|---|---|
+| REQ-001 | `03 §1-2(다이어그램 VIEWS/EXE)`, `§1-3(unit-19/20)`, `§4-4(POST /convert)` | 02가 이미 "unit-20(신규)" 작업단위 추가를 제안했고, 본 설계서가 unit-20의 실제 파일범위(`converter/views.py`)를 확정했다 |
+| REQ-010 | `03 §4-4(GET /download/<job_id>/)`, `§8-1(트레이드오프 3)` | 다운로드 방식(프록시 스트리밍) 확정 |
+| REQ-011 | `03 §6-2(개인정보 처리 원칙 전면재작성)`, `§6-3(net_guard 역할반전, DEC-033)` | "역할 축소·재정의"가 아니라 "역할 반전"으로 더 구체화됨 — 02가 "축소"로 표현한 것보다 본 설계서가 더 정확한 표현(화이트리스트로 전환은 축소가 아니라 반전) |
+| REQ-013 | 변경 없음(v4 매핑 유지: `03 §4-3`) | |
+| REQ-014 | 변경 없음(v4 매핑 유지: `03 §1-3(unit-12)`, `§6-2`) | |
+| REQ-015 | `03 §4-4(전체 라우트 표)`, `§1-3(unit-20, unit-13 폐기 확정)` | "unit-13 존속 여부 불확실"이 이번에 **"폐기(DEC-034)"로 완전히 해소**됐다 — traceability.md의 "작업 단위" 컬럼에서 unit-13을 제거하고 unit-20만 남겨야 한다 |
+| REQ-019 | 변경 없음(v4 매핑 유지) — 단 비고에 "웹 경로는 §7-1(Django 콘솔 로깅)로 별도 처리, unit-0/17 파일 자체는 영향 없음" 추가 제안 | |
+| REQ-020 | 변경 없음(v4 매핑 유지: `03 §6-6`) | |
+| REQ-021 | `03 §1(전체), §2-1, §2-3, §4-4, §6` | "가장 중요한 v5 변경"이 이번에 실제 설계 매핑을 갖게 됨 |
+| REQ-026 | `03 §6-4(레이트리밋/캡차)` | 작업단위는 02 제안대로 unit-23 유지 |
+| REQ-027 | `03 §2-1(DEC-031 비동기처리 기술확정)`, `§4-4(실행계약)` | 작업단위는 unit-21 유지 |
+| REQ-028 | `03 §3-2(보관정책)`, `§4-4(다운로드시 즉시삭제)`, `§6-2(지연스윕+R2라이프사이클 이중구조)` | 작업단위는 unit-22 유지, TTL 값 60분 확정(DEC-029) |
+| REQ-029 | `03 §5(구체수치표)` | 작업단위는 unit-24 유지, 예시치(500MB/30분)를 실제 확정치(50MB/5분)로 대체(DEC-030) — traceability.md 비고란에 "확정치로 대체됨, 예시치 아님" 갱신 제안 |
+| REQ-030 | `03 §2-3(국외이전 판단)`, `§6-2` | 작업단위는 unit-25 유지, "국외이전 고지 필요 여부"가 이번에 "필요(확정)"로 해소됨 — traceability.md 비고란에 반영 제안 |
+
+**traceability.md 상단 안내문 추가 제안**: "**03단계 v5 동기화(2026-09-28)**: `03-system-design.md`가 v4(Bottle/127.0.0.1)에서 v5(Django/Render/Neon/R2)로 전면 리비전됨에 따라 REQ-001/010/011/015/021/026~030의 '설계 매핑' 컬럼이 갱신되었다. unit-9는 폐기가 아니라 역할 반전(아웃바운드 화이트리스트), unit-13은 완전 폐기(unit-20이 대체)로 확정되었다. **unit-0~8/12/15~18(핵심 변환 로직)의 구현상태·단위테스트·결함이력은 이 동기화로 전혀 영향받지 않으며 그대로 보존된다.**"
 
 ---
 
 ## 다음 단계(4단계) 착수 조건 안내
-- 4단계(UX 디자인) 착수를 위한 입력 계약(본 문서 PASS + 2회 이상 검증)은 충족되었다.
-- 04단계는 Tkinter GUI(DEC-009)의 위젯 표현력 한계를 감안해 "최소 GUI"(REQ-015: 파일 선택, 진행률 표시, 경고 목록, 후원 버튼)를 설계하면 된다. 8-3절의 미해결 사항 중 프로젝트 라이선스(1번)는 DEC-014(MIT)로 이미 해소됐고, 후원 플랫폼(2번)도 DEC-015(GitHub Sponsors)로 플랫폼은 확정됐다(실제 URL만 05단계 unit-18 착수 시 확정) — 남은 3번(HWPX 지원 버전 실측)만 착수를 막지 않는 상태로 남아 있다.
+
+- 4단계(UX 디자인) 착수를 위한 입력 계약(본 문서 PASS + 2회 이상 검증)은 아래 내부검증 로그로 충족된다.
+- 04단계가 반드시 반영해야 할 사항은 §8-2에 7개 항목으로 정리했다 — "로컬 웹서버 브라우저 UI"(DEC-018 기반) 산출물을 그대로 쓰지 말고, 익명 다중 사용자·새 에러 상태·개인정보처리방침 링크·파일명 복원 인터랙션을 반영해 리비전할 것.
+- 8-3절의 미해결 사항 5건 중 어느 것도 04단계 착수를 막지 않는다(전부 "착수는 가능, 배포 전 재확인 필요" 등급).

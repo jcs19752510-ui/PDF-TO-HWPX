@@ -35,7 +35,7 @@ zip+XML 패키지 포맷의 공통 관례 포함)에 근거한 "합리적 추정
 from __future__ import annotations
 
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from lxml import etree
@@ -58,6 +58,29 @@ MIMETYPE_CONTENT = b"application/hwp+zip"  # 추정(미검증) — ODF의 mimety
 
 SECTION_DIR = "Contents"
 DEFAULT_SECTION_NAME = "section0.xml"
+
+# BinData(이미지 등 바이너리 파트) 저장 관례 — 아래 전부 "추정(미검증)"이다(모듈
+# docstring 1절과 동일 사유). ODF(`Pictures/`)·OOXML(`media/`)류 zip+XML 패키지
+# 포맷이 바이너리 리소스를 별도 디렉터리에 두고 manifest에 media-type을 등록하는
+# 공통 관례를 따라, HWPX도 "BinData/" 하위에 "<bin_data_id>.<확장자>"로 저장하고
+# manifest.xml/content.hpf에 등록하는 방식을 추정 채택했다. 실제 한글이 이 디렉터리명을
+# 쓰는지는 확인되지 않았다 — unit-4-note.md "확장(2026-09-28)" 절 참고.
+BIN_DATA_DIR = "BinData"
+
+# unit-7(image_embedder.py)이 실제로 반환하는 image_format 값만 다룬다
+# (ccitt/jbig2/unknown은 unit-7이 이미 걸러내고 이 함수에 넘기지 않는다는 계약).
+_IMAGE_FORMAT_TO_EXTENSION = {
+    "jpeg": "jpg",
+    "jp2": "jp2",
+    "png": "png",
+    "tiff": "tif",
+}
+_IMAGE_FORMAT_TO_MEDIA_TYPE = {
+    "jpeg": "image/jpeg",
+    "jp2": "image/jp2",
+    "png": "image/png",
+    "tiff": "image/tiff",
+}
 
 # zip 엔트리 타임스탬프를 고정값으로 둔다 — 실제 생성 시각을 파일에 남기지 않기 위함
 # (개인정보/재현성 목적. 03 §6-2 개인정보 최소화 원칙과 같은 방향).
@@ -257,4 +280,126 @@ def add_section_xml(
         tmp_path.unlink(missing_ok=True)
         raise ContainerBuildError(
             f"HWPX 섹션 XML 갱신 실패: {container_path} ({exc})"
+        ) from exc
+
+
+def add_bin_data(
+    container_path: Path,
+    entries: Mapping[str, tuple[bytes, str]],
+) -> None:
+    """이미지 등 바이너리(BinData) 파트를 기존 HWPX 컨테이너에 삽입/갱신한다.
+
+    ``entries``는 ``{bin_data_id: (raw_bytes, image_format)}`` 형태로,
+    ``hwpx_writer.image_embedder.EmbeddedImage``(unit-7)의 ``bin_data_id``/
+    ``raw_bytes``/``image_format`` 3종을 그대로 딕셔너리로 옮긴 것을 그대로
+    받도록 시그니처를 맞췄다(unit-7-note.md §6-1 제안 계약과 동일).
+
+    각 항목을 ``BinData/<bin_data_id>.<확장자>``(확장자는 ``image_format``에서
+    유도)로 zip에 쓰고, ``META-INF/manifest.xml``과 ``Contents/content.hpf``의
+    manifest에 media-type을 등록한다(둘 다 well-formed XML로 재직렬화). **spine에는
+    추가하지 않는다** — BinData는 문서 흐름의 일부(section)가 아니라 `hp:pic`이
+    참조하는 리소스이므로, OPF류 포맷(EPUB 등)에서 바이너리 리소스를 manifest에는
+    등록하되 spine(읽기 순서)에는 넣지 않는 관례를 그대로 따랐다(추정 — 미검증,
+    모듈 docstring 1절과 동일한 성격의 불확실성).
+
+    ``add_section_xml``과 동일한 "기존 zip 전체를 새 zip으로 재작성하며 대상
+    항목만 교체, 나머지는 그대로 복사 후 ``Path.replace()``로 원자적 치환" 패턴을
+    재사용한다. 이미 같은 ``bin_data_id``로 등록된 항목이 있으면(재호출 시) manifest/
+    content.hpf에 중복 등록하지 않고 바이트만 덮어쓴다(멱등성 보장).
+
+    ``image_format``이 unit-7이 이미 지원 포맷으로 분류한 값(``jpeg``/``jp2``/
+    ``png``/``tiff``) 중 하나가 아니면 어떤 파일도 건드리지 않고 즉시
+    ``ContainerBuildError``를 던진다(경계 검증 — 잘못된 확장자/미디어타입으로
+    조용히 저장하는 사고를 방지).
+
+    ``entries``가 비어 있으면 아무 것도 하지 않는다(파일 미접촉, 예외 없음).
+
+    실패 시(대상 파일 없음, 필수 파트 없음, 손상된 zip, XML 파싱 실패 등)
+    ``ContainerBuildError``를 던진다.
+    """
+    if not entries:
+        return
+
+    for bin_data_id, (_raw_bytes, image_format) in entries.items():
+        if image_format not in _IMAGE_FORMAT_TO_EXTENSION:
+            raise ContainerBuildError(
+                f"지원하지 않는 이미지 포맷입니다: bin_data_id={bin_data_id!r}, "
+                f"image_format={image_format!r}"
+            )
+
+    container_path = Path(container_path)
+    if not container_path.exists():
+        raise ContainerBuildError(f"HWPX 컨테이너 파일이 존재하지 않습니다: {container_path}")
+
+    manifest_arcname = "META-INF/manifest.xml"
+    content_hpf_arcname = f"{SECTION_DIR}/content.hpf"
+    tmp_path = container_path.with_name(container_path.name + ".tmp")
+    try:
+        with zipfile.ZipFile(container_path, mode="r") as src:
+            existing_entries = {item.filename: (item, src.read(item.filename)) for item in src.infolist()}
+
+        try:
+            manifest_bytes = existing_entries[manifest_arcname][1]
+            content_hpf_bytes = existing_entries[content_hpf_arcname][1]
+        except KeyError as exc:
+            raise ContainerBuildError(
+                f"HWPX 컨테이너에 필수 파트가 없습니다: {exc} ({container_path})"
+            ) from exc
+
+        manifest_root = etree.fromstring(manifest_bytes)
+        content_root = etree.fromstring(content_hpf_bytes)
+        content_manifest = content_root.find(f"{{{NAMESPACES['opf']}}}manifest")
+        if content_manifest is None:
+            raise ContainerBuildError(
+                f"content.hpf에 manifest 요소가 없습니다: {container_path}"
+            )
+
+        existing_manifest_paths = {
+            el.get("full-path") for el in manifest_root.findall(f"{{{NAMESPACES['ocf']}}}file-entry")
+        }
+        existing_content_hrefs = {
+            el.get("href") for el in content_manifest.findall(f"{{{NAMESPACES['opf']}}}item")
+        }
+
+        updates: dict[str, bytes] = {}
+        for bin_data_id, (raw_bytes, image_format) in entries.items():
+            extension = _IMAGE_FORMAT_TO_EXTENSION[image_format]
+            media_type = _IMAGE_FORMAT_TO_MEDIA_TYPE[image_format]
+            arcname = f"{BIN_DATA_DIR}/{bin_data_id}.{extension}"
+            updates[arcname] = raw_bytes
+
+            if arcname not in existing_manifest_paths:
+                etree.SubElement(
+                    manifest_root,
+                    f"{{{NAMESPACES['ocf']}}}file-entry",
+                    attrib={"full-path": arcname, "media-type": media_type},
+                )
+                existing_manifest_paths.add(arcname)
+
+            if arcname not in existing_content_hrefs:
+                etree.SubElement(
+                    content_manifest,
+                    f"{{{NAMESPACES['opf']}}}item",
+                    attrib={"id": bin_data_id, "href": arcname, "media-type": media_type},
+                )
+                existing_content_hrefs.add(arcname)
+
+        updates[manifest_arcname] = _serialize(manifest_root)
+        updates[content_hpf_arcname] = _serialize(content_root)
+
+        with zipfile.ZipFile(tmp_path, mode="w") as dst:
+            written: set[str] = set()
+            for filename, (item, data) in existing_entries.items():
+                if filename in updates:
+                    data = updates[filename]
+                    written.add(filename)
+                dst.writestr(item, data)
+            for arcname, data in updates.items():
+                if arcname not in written:
+                    _write_entry(dst, arcname, data)
+        tmp_path.replace(container_path)
+    except (OSError, zipfile.BadZipFile, etree.XMLSyntaxError) as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise ContainerBuildError(
+            f"HWPX BinData 삽입 실패: {container_path} ({exc})"
         ) from exc
