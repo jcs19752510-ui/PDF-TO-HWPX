@@ -260,3 +260,56 @@ platformdirs 설치 후 회귀: 유효 PDF 202 `{"job_id"}`, `.txt` 400, OCR 켜
 ?? "\354\260\270\354\241\260HWPX/"                      (오케스트레이터/타 작업)
 ```
 임시 아티팩트(`.harness-tmp/venv_05_unit20c`, `t20c`, `t20c_data`)와 루트 `pdf_to_hwpx.egg-info`는 삭제 완료, 18201 서버 종료 확인. 오케스트레이터 dev 서버(8000)·`venv_run_local`·`run_local.log`·`db.sqlite3`·`.dev-media` 무접촉.
+
+---
+
+## 재작업 이력 v4 (DEC-063, 규칙 F — DEF-020c-01)
+
+### R-9. 재작업 내용
+- 속도 트랙: L3(변경 없음). 병렬 아님(단, unit-22 재작업이 cleanup.py를 동시 수정 중 — 본 호출은 읽기만). 수정 파일: `webapp/converter/views.py`, 본 note. 설계서 무수정.
+- 구조 변경(views.py `convert`):
+  1. 예약 행(EXPIRED)을 **업로드 저장보다 먼저** `job.save()`(락 밖). EXPIRED는 카운트 대상이 아니므로 대기열 판정 무영향이며, 이후 어느 지점에서 죽어도 스윕이 찾을 행이 남는다(기존엔 파일 저장~행 저장 사이 사망 시 행 없는 고아 파일이 생길 수 있었음).
+  2. `try: job.save -> save_uploaded_file -> _submit_and_promote / except QueueFullError: 503 / finally: 제출 성공 표시(`_HandOff.done`)가 없으면 `_discard_job`. `Exception`뿐 아니라 KeyboardInterrupt/SystemExit/GeneratorExit 등 BaseException도 finally를 타 폐기된다. 기존 `except Exception: _discard_job; raise` 제거(finally로 통합).
+  3. `_submit_and_promote`(구 `_save_and_submit`): 락 안에는 `submit_job` + 승격 UPDATE만(행 저장은 락 밖으로 이동 — 락 안 작업량 감소). `submit_job` 성공 직후 `handed_off.done=True` — 이후엔 어떤 예외(승격 중 BaseException 포함)에도 폐기하지 않는다(워커가 입력을 읽는 중일 수 있음).
+  4. `_discard_job`: 예외를 밖으로 내지 않음(사용자 응답 불변). 오브젝트 삭제 실패 시 행을 **남기고** 로그(`logger.exception`, job_id만; 파일명·개인정보 없음) — 행이 있어야 스윕이 재시도할 수 있다. 행 삭제 실패도 로그 후 스윕에 위임.
+- OBS-7: 승격 UPDATE 실패 시 1회 재시도 추가(로그 시도 n/2). 끝내 실패해도 폐기하지 않고 202 유지. executor.py:86에서 워커가 시작 시 status를 PROCESSING으로 저장하므로 그때 자연 복구되며, 그 전까지의 폴링 404 창은 남는다(DB 장애가 겹칠 때만). 더 근본적 해소(승격 실패 시 폴링을 EXPIRED 예약과 구분 등)는 동작 변경이 커서 하지 않음 — 질문 1.
+- (b) 프로세스 사망 계약 점검(cleanup.py 읽기만, 수정 없음): 뷰가 채우는 필드 = `status='expired'`, `purged_at=NULL`(미설정), `created_at=auto_now_add`(행 저장 시각, 업로드 저장보다 이전), `input_object_key` 설정. cleanup.py `TTL_MINUTES=60`. 계약(EXPIRED + purged_at IS NULL + created_at이 60분+유예 경과)과 **일치**. `os._exit` 별도 프로세스 재현: 종료 코드 9, 행 `expired`/`purged_at None`/`created_at` 존재, 업로드 파일 1개 잔존 = 스윕 회수 대상 그대로. 정상 폐기된 행은 삭제되므로 계약 조건에 걸리지 않고, 스윕이 정리한 행(purged_at 있음)·다운로드 완료 행(status DONE)과도 구분된다. 주의: 현재 작업트리의 cleanup.py는 아직 EXPIRED를 제외한다(unit-22 재작업 진행 중) — 스윕 쪽 완료 전까지 (b)는 미해소.
+
+### R-9-1. 게이트 / 검증
+- 게이트 1: ruff/flake8/mypy 설정 없음(재확인) -> `py_compile` 통과.
+- 게이트 2: [x] 설계·기존 동작 유지(503 문구·20건 경계·락·조건부 승격·DEC-049 import 위치/일반 500/HEAD 405 코드 무변경) [x] 예외 삼킴 없음(폐기·승격 실패 모두 logger.exception, BaseException은 삼키지 않고 전파) [x] 입력 검증 순서 불변 [x] 시크릿 없음 [x] 신규 의존성 없음 [x] 범위 외 변경 없음.
+- 실측(격리 venv/DB/MEDIA `_05_unit20d`, executor는 스텁, 별도 서버 미기동): 11건 TransactionTestCase. 수정 전(HEAD) 대조: 4 FAIL + 2 ERROR(BaseException 3경로 — submit·락 진입·파일 저장 직후 — 에서 행/파일 잔존, 승격 재시도 없음, 폐기 실패 예외 누출 등). 수정 후 11건 전부 OK. 뮤턴트(finally 폐기 무력화) 7건 FAIL로 검출. 프로세스 사망 시뮬레이션은 위 (b) 확인.
+- 검증 케이스: 정상 202/pending, 503 후 (0행,0파일), submit KeyboardInterrupt/SystemExit/파일저장 후 KeyboardInterrupt -> (0,0), RuntimeError -> (0,0), 오브젝트 삭제 실패 -> 503 유지+행 잔존(expired, purged_at NULL)+로그에 파일명 없음, 행 삭제 실패 -> 503 유지, 승격 1회 실패 -> 재시도 후 pending, 2회 실패 -> 202+expired 잔존(폐기 안 함), 승격 중 KeyboardInterrupt -> 행·입력 보존.
+- 임시 아티팩트 `.harness-tmp/_05_unit20d` 전체 삭제(테스트 스크립트 포함), egg-info 없음, 8000 서버·venv_run_local·db.sqlite3·.dev-media 무접촉. 검증 로그: `verify-log_unit-20-note.md` 회차 5~6.
+
+### R-9-2. 인수 조건 (06 추가)
+- **AC-19**: 예약 저장 이후 `submit_job`/락 진입/파일 저장 직후에서 `KeyboardInterrupt`·`SystemExit` 주입 시 행 0·업로드 0. 503·일반 Exception도 동일.
+- **AC-20**: 오브젝트 삭제 실패 주입 시 응답 불변(503), 행은 `expired`+`purged_at NULL`로 잔존, ERROR 로그에 job_id만(파일명 없음). 행 삭제 실패도 응답 불변.
+- **AC-21**: `submit_job` 성공 후에는 승격 실패/승격 중 BaseException에도 행·업로드 보존. 승격 1회 실패는 재시도로 pending.
+- AC-1~18 회귀(AC-5 20건 경계 포함).
+
+### R-9-3. 확인 필요 / 미결
+1. OBS-7 잔여 창(승격 2회 실패 시 워커 시작 전 폴링 404) 근본 해소 여부: 현재는 로그+재시도까지만. 필요하면 job_status가 EXPIRED를 pending으로 보이게 하는 방안이 있으나 예약 행 노출 정책 변경이라 결정 요청.
+2. (b)는 unit-22 재작업(스윕이 오래된 EXPIRED & purged_at NULL 행 정리) 완료가 전제. 06/07에서 두 단위 통합 확인 필요(유예 시간 값은 unit-22 소관).
+3. 프로세스 로컬 `_submit_lock`(다중 worker 한도 초과)은 R-8-5(2) 그대로.
+
+### R-9-4. 공유 문서 갱신 요청
+- decisions.md: DEC-063 처리 결과 — convert try/finally 폐기 구조, 행 선저장(락 밖), 폐기 실패 시 행 잔존(스윕 위임), 승격 1회 재시도.
+- traceability.md: (REQ-028, 비고, "unit-20 v4: 예약 행 폐기 finally 보장, 프로세스 사망분은 unit-22 스윕 계약(EXPIRED+purged_at NULL+60분+유예)에 의존"), (REQ-001/010/015, 구현 상태, "unit-20 v4 재작업 완료 — DEF-020c-01 (a)(c), 06 재검증 대기(AC-19~21)").
+- 03-system-design.md §4-4(3): OBS-9 정정(오케스트레이터 별도 처리)에 "행은 업로드 저장 전 EXPIRED로 예약 저장" 추가 반영 권장.
+
+### R-9-5. git status 원문 (작업 종료 시점)
+```
+ M docs/harness/03-system-design.md               (오케스트레이터)
+ M docs/harness/decisions.md                       (오케스트레이터)
+ M docs/harness/traceability.md                    (오케스트레이터)
+ M docs/harness/units/unit-20-test.md              (unit-20 06)
+ M docs/harness/units/unit-22-note.md              (unit-22 동시 재작업)
+ M docs/harness/verify-log_03-system-design.md     (03)
+ M docs/harness/verify-log_unit-20-test.md         (unit-20 06)
+ M webapp/converter/cleanup.py                     (unit-22 동시 재작업)
+ M webapp/converter/views.py                       (본 재작업)
+?? docs/harness/analysis/                          (오케스트레이터)
+?? docs/harness/verify-log_unit-22-note.md         (unit-22)
+```
+(unit-20-note.md와 verify-log_unit-20-note.md는 이전 git 스냅샷에 이미 반영되어 status에 안 보이거나 본 호출 수정분 — 본 재작업 소유.)

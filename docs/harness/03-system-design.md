@@ -3,6 +3,8 @@
 - 작성 에이전트: 03-system-designer
 - 버전: **v5 (DEC-020~028 대규모 리비전 — "로컬 전용 1인 도구" → "공개 웹 변환 서비스"로 근본 전환. v4까지의 DEC-018/019(Bottle, 127.0.0.1 전용)를 전면 대체)**
 - 입력: `docs/harness/02-planning.md`(v5, PASS), `docs/harness/decisions.md` DEC-020~028(이번 리비전의 유일한 근거) + 그 이전 DEC-001~019(핵심 변환 로직 관련 결정은 그대로 승계), `docs/harness/03-system-design.md`(v4, 대체 대상), 별도 프로젝트 `C:\big21\vibe-coding\AI-AUTO-WORK`(Django 5.2.17 + Wagtail 7.4.3, Render+Neon+R2 배포 — Wagtail/blog/comments/subscribers는 참고하지 않음, DEC-026)
+- **버전 갱신: v5.2 (2026-09-29, DEC-051 규칙 F 근본 원인 단계 리비전 — HWPX 출력 구조 근본 재설계)**. 사용자가 변환 결과를 한글에서 열자 문서로 인식되지 않았다(zip 내부 바이트가 글자로 표시). 원인: DEC-008(자체 OWPML 라이터, 스펙 지식만으로 직접 구현) + DEC-017(한글 미설치로 실제 한글 검증 미룸)에서 예고된 리스크가 실현됐고, 06/07/08 테스트가 자체 스키마 기준이라 이를 잡지 못했다. 이번 리비전은 §1-4(신규, 작업 단위 확정표 v5.2 포함), §2-4(신규), §3-3·§3-4(신규), §8-4(신규), §9·§10-2에만 추가한다. §4-4·§5·§6 등 HWPX와 무관한 절은 변경하지 않았다. 근거 문서: `docs/harness/analysis/hwpx-reference-structure.md`(참조 구조 분석, 이하 "분석서"), R1 = 한글이 저장한 정상 HWPX(사용자 제공, 기밀 가능 — 이 문서에도 본문/제목/고유명사를 적지 않는다).
+- **정정됨(삭제하지 않고 표기, v5.2)**: (1) 아래 "핵심 전제"의 `pdf_to_hwpx` 무수정 서술은 **v5 웹 서비스 리비전 한정**이었고, v5.2는 `hwpx_kernel/`·`hwpx_writer/`·`core/orchestrator.py`를 재작업 대상으로 지정한다(§1-4). (2) v4 §2-1의 "표준 라이브러리로 직접 구현하면 한글 호환을 통제할 수 있다"·"unit-4 네임스페이스/태그는 공개 표준 일반 지식으로 충분하다"는 전제는 **사실과 달라 정정**됐다(실측 결함표: 분석서 §10, 정정 목록: §2-4). (3) v5 §1-3이 "v4 §1-3 그대로 유효"라고 한 unit-4/5/6/7/8 행은 §1-4의 v5.2 표로 대체된다.
 - **핵심 전제(반드시 지킨 제약)**: unit-0~4(그리고 향후 unit-5~8, 15~18)가 만드는 `pdf_to_hwpx` 패키지(PDF 바이트 입력 → HWPX 바이트 출력)는 **이번 리비전으로 단 한 줄도 수정하지 않는다.** 이 설계서가 다루는 것은 오직 "그 라이브러리를 누가, 어떻게 호출하고, 그 앞뒤에 무엇을 두는가"이다 — 즉 새로운 `webapp/`(Django 프로젝트)가 `pdf_to_hwpx`를 **외부 라이브러리로 import**해서 쓰는 구조다. 02-planning.md v5 §0-3의 "unit-0~4 영향 없음 확인"을 이 설계서도 그대로 재확인한다.
 - **본 리비전에서 새로 확정한 항목**(02-planning.md v5가 명시적으로 위임, 근거와 함께 규칙 A-3 예외로 자체 결정 — 전부 `decisions.md` DEC-029~036에 기록):
   1. TTL 구체 시간(60분)
@@ -86,7 +88,7 @@ flowchart TD
 ```
 
 - **읽는 법**: `EXE`(스레드풀)가 `pdf_to_hwpx`를 직접 함수 호출하는 유일한 지점이다 — HTTP 요청 스레드(`VIEWS`)는 파일을 R2에 올리고 DB 행을 만든 뒤 `EXE.submit(...)`으로 즉시 반환하며, 실제 변환은 절대 요청-응답 스레드 안에서 실행되지 않는다(REQ-027).
-- **`LIB` 서브그래프는 이 설계서의 변경 대상이 아니다** — v4 §1-2/§3/§4-1/§4-2가 이미 정의했고, 05/06단계가 별도로 구현·검증 중이다. 이 다이어그램에 다시 그린 이유는 "웹 서비스가 이 라이브러리의 무엇을 어떻게 소비하는지" 경계를 명시하기 위함이지, 내부를 재설계하기 위함이 아니다.
+- **(정정됨 v5.2: `LIB` 내부의 `hwpx_kernel/*`, `hwpx_writer/*`, `orchestrator`는 v5.2에서 재설계 대상이다 — §1-4. 아래 원문은 v5 웹 계층 리비전 시점의 서술로 보존.)** **`LIB` 서브그래프는 이 설계서의 변경 대상이 아니다** — v4 §1-2/§3/§4-1/§4-2가 이미 정의했고, 05/06단계가 별도로 구현·검증 중이다. 이 다이어그램에 다시 그린 이유는 "웹 서비스가 이 라이브러리의 무엇을 어떻게 소비하는지" 경계를 명시하기 위함이지, 내부를 재설계하기 위함이 아니다.
 - `NETG`(net_guard, unit-9)는 **역할이 반전**됐다(v4: 아웃바운드 전면 차단 → v5: 아웃바운드 화이트리스트). 이유와 구현은 §6-3.
 
 ### 1-3. 작업 단위 확정표 (02단계 §9 후보표 검증·확정 — v5)
@@ -140,6 +142,87 @@ flowchart TD
 - 동시 수정 금지(같은 파일 접촉) 조합: (unit-11, unit-18)은 v4와 무관(파일 자체가 다름), (unit-20, unit-18)은 순차. 그 외 새 조합 충돌 없음.
 - 오케스트레이터가 반드시 인지할 것: **이 표는 `pdf_to_hwpx/` 패키지 내부의 어떤 파일도 목록에 포함하지 않는다** — unit-19~26 중 어느 것도 unit-0~8/12/15~18의 파일범위를 침범하지 않는다(이것이 이번 리비전의 최우선 제약이었다).
 
+### 1-4. HWPX 라이팅 계층 재설계와 작업 단위 확정표 (v5.2 신규, DEC-051)
+
+#### 1-4-1. 설계 원칙 (무엇이 바뀌는가)
+
+- **"한글이 저장한 구조가 유일한 진실"**. 태그·속성·순서·ID 체계·단위는 분석서의 【관찰】 항목만 근거로 삼는다. 스펙 기억으로 채우지 않는다. 관찰되지 않은 것(그림 `hp:pic`·BinData, `hh:italic`, 가로 용지)은 **구현하지 않고 참조 파일 도착을 기다린다**(§8-4 질문 목록).
+- **커널(형식을 아는 층)과 라이터(IR을 아는 층)를 분리한다.** 커널은 OWPML 요소 팩토리·스타일 표·패키지를 안다(PDF·IR을 모른다). 라이터는 IR→레이아웃 결정을 하고 커널을 호출한다. 이 경계는 v4 이래의 "파서/라이터 격리" 원칙을 한 단계 더 세분화한 것이며, 병렬 가능성이 아니라 책임 분리 기준으로 그은 것이다.
+- **스타일은 공유 상태다.** charPr/paraPr/borderFill 표는 문서 전체에서 하나이므로 `DocContext`(스타일 레지스트리 + ID 할당기)를 오케스트레이터가 만들어 모든 빌더에 넘긴다(v4의 "스타일 id 기본값 '0'만 쓰는" 방식은 폐기).
+- **발행은 초집합, 최소화는 실험으로.** R1에서 항상 존재하는 요소는 전부 발행한다. 생략 가능성은 사용자 실험(분석서 §12)으로 확인된 것만 반영한다.
+- **자체 속성 금지.** 표준에 없는 속성(`bboxPt`, `fontName`, `fontSizeHwpunit`, `bold` 등 B0에서 쓰던 것)을 출력에 남기지 않는다(구조 검증기가 위반을 잡는다, §3-4).
+
+#### 1-4-2. 컴포넌트/모듈 경계
+
+```mermaid
+flowchart TD
+    ORCH["core/orchestrator.py (unit-8R)<br/>페이지 순회, 블록 y순 병합, 구역 분할, 결과 조립"]
+    subgraph Writer["hwpx_writer/ — IR을 아는 층"]
+        PB["paragraph_builder.py (unit-5R)<br/>줄 묶기, 줄→문단"]
+        TB["table_builder.py (unit-6R)<br/>표→hp:tbl 문단"]
+        IB["image_embedder.py (unit-7R)<br/>그림→hp:pic 문단 (구조 미확정)"]
+    end
+    subgraph Kernel["hwpx_kernel/ — OWPML을 아는 층 (unit-4R)"]
+        CTX["context.py: DocContext"]
+        STY["styles.py: StyleRegistry + header.xml 직렬화"]
+        FNT["fonts.py: 글꼴 대체 정책"]
+        FLOW["flow.py: 레이아웃 정책 상수 + FlowTracker"]
+        SCH["schema.py: OWPML 요소 팩토리(p/run/t/lineseg/tbl/tc)"]
+        SEC["section.py: PageSetup, secPr, section.xml 조립"]
+        PKG["container.py: HwpxPackage(zip/패키지 메타 파트)"]
+        CON["constants.py: 네임스페이스·프롤로그·단위·enum"]
+    end
+    VAL["hwpx_kernel/validator.py (unit-27)<br/>구조 검증기(프로파일 diff)"]
+    ORCH --> PB & TB & IB
+    ORCH --> CTX & SEC & PKG
+    PB & TB & IB --> SCH
+    PB & TB & IB --> FLOW
+    SCH --> STY --> FNT
+    STY --> CON
+    SCH --> CON
+    PKG --> CON
+    VAL -. "산출 zip 검사(테스트·진단 전용)" .-> PKG
+```
+
+| 모듈 | 책임 | 공개 계약(요지, 상세 §3-3) |
+|---|---|---|
+| `hwpx_kernel/constants.py` | 네임스페이스 15종+패키지 메타 네임스페이스, 프롤로그 바이트, `HWPUNIT_PER_PT=100`, 관찰된 enum 어휘 | `qn(prefix, tag)`, `XML_PROLOG`, `pt_to_hwpunit()` |
+| `hwpx_kernel/styles.py` | `StyleRegistry`: 글꼴·charPr·paraPr·borderFill·style 중복 제거(interning), `header.xml` 직렬화(itemCnt/fontCnt 자동 계산) | `char_pr(spec)->id`, `para_pr(spec)->id`, `border_fill(spec)->id`, `serialize_header(sec_cnt)` |
+| `hwpx_kernel/fonts.py` | PDF 글꼴명 → 한글 글꼴 계열 대체 | `resolve_font(pdf_name)->FontChoice` |
+| `hwpx_kernel/flow.py` | 레이아웃 정책 상수(양자화 단위, 줄간격 %), `FlowTracker`(문단 앞 간격·정렬·들여쓰기 산정) | `FlowTracker.place(top_pt, bottom_pt, x0_pt, x1_pt)->FlowPlacement` |
+| `hwpx_kernel/schema.py` | OWPML 요소 팩토리. 관찰된 속성·순서만 만든다. `SCHEMA_VERSION="2.0"`(계약 파괴적 변경) | `make_paragraph()`, `make_run()`, `make_lineseg()`, `make_table()`, (`make_pic()`은 04_그림 후) |
+| `hwpx_kernel/section.py` | `PageSetup`, `hp:secPr` 조립, 첫 문단 첫 run에 secPr/colPr 주입, `hs:sec` 직렬화 | `build_section_xml(paragraphs, page_setup)` |
+| `hwpx_kernel/container.py` | `HwpxPackage`: mimetype/version/container/manifest/hpf/settings/Preview/header/section/BinData zip 작성 | `HwpxPackage(meta).add_section()/set_header()/write()` |
+| `hwpx_kernel/context.py` | `DocContext`(레지스트리, ID 할당기, BinData 등록부) | `DocContext.new()` |
+| `hwpx_kernel/validator.py` | 구조 검증기(V1~V13, §3-4). 런타임 변환 경로에서는 호출하지 않음 | `validate_hwpx(path)->list[Violation]` |
+
+`pdf_reader/ir.py`(IR)는 **변경 없음**(unit-1/2/3/15/16 무영향). 정정: 이전 문단에서 IR bbox를 `bboxPt` 속성으로 실어 오케스트레이터가 정렬하던 방식은 폐기하고, 오케스트레이터가 IR 좌표로 직접 정렬한다(§3-3-3).
+
+#### 1-4-3. 작업 단위 확정표 (v5.2, HWPX 재작업 — 02 §9-1 및 v5 §1-3의 unit-4/5/6/7/8 행 대체)
+
+| 단위ID | 커버 REQ-ID | 선행 | 확정 파일 범위(소유) | 공유 자원 접촉 | 병렬 가능(확정, 근거) | 한글 확인 인수조건 |
+|---|---|---|---|---|---|---|
+| **unit-4R** (unit-4 재작업, **이 작업의 공통 선행 = unit-0 역할**) | REQ-008 | 03 v5.2 PASS, 01_빈문서.hwpx 수령(검증용, 생성 자체는 분석서로 착수 가능) | `pdf_to_hwpx/hwpx_kernel/{__init__,constants,context,styles,fonts,flow,schema,section,container}.py`, `tests/hwpx_kernel/*`, `tools/hwpx_probe.py`(프로브 파일 생성기, 저장소 포함·출력은 `.harness-tmp/`) | `hwpx_kernel/__init__.py`, `common/exceptions.py`(필요 시 예외 클래스 추가는 이 unit만), 기존 `tests/hwpx_kernel/*` 전면 교체 | **unit-27과 병렬 가능**(파일 겹침 없음: 아래 표). 그 외 전 unit의 선행 | AC-H1(G1): P1a/P1b/P2/P3/P4 프로브가 한글에서 열림 |
+| **unit-27** (신규) 구조 검증기 + 프로파일 + diff 테스트 | REQ-008 | 분석서(입력). 통합 검증은 unit-4R 이후 | `pdf_to_hwpx/hwpx_kernel/validator.py`, `tests/hwpx_validator/*`, `tests/fixtures/hwpx_profile.json`(내용 없는 구조 프로파일), `tools/hwpx_profile_extract.py` | 없음(`hwpx_kernel/__init__.py`를 고치지 않고 경로 import) | **unit-4R과 병렬 가능(확정)**: 서로 다른 파일, 상호 import 없음(validator는 zip만 읽음). 다만 "검증기가 4R 산출물을 실제로 통과시키는가"는 4R 완료 후 통합 확인 | AC-H 없음(도구). 대신 B0 유형의 결함 fixture를 반드시 FAIL시켜야 함 |
+| **unit-5R** (unit-5 재작업) | REQ-002, REQ-006 | unit-4R(+G1 통과) | `hwpx_writer/paragraph_builder.py`, `tests/hwpx_writer/test_paragraph_builder.py` | 커널 API를 import만(수정 금지) | **unit-6R과 병렬 가능(확정)**: 두 파일은 서로를 import하지 않음(현 코드 Grep 확인: paragraph_builder는 schema·ir, table_builder는 container·schema·ir만 import). 둘 다 커널을 읽기만 함 | AC-H2(G2): 텍스트 PDF 변환 결과 |
+| **unit-6R** (unit-6 재작업) | REQ-004 | unit-4R(+G1 통과) | `hwpx_writer/table_builder.py`, `tests/hwpx_writer/test_table_builder.py` | 커널 API import만 | unit-5R과 병렬 가능(위 근거) | AC-H2(G2): 표 PDF 변환 결과 |
+| **unit-4P** (unit-4R 확장: 그림 요소·BinData 등록) | REQ-003, REQ-008 | **`04_그림.hwpx` 수령**, unit-4R | `hwpx_kernel/schema.py`(make_pic), `container.py`(BinData/manifest 등록), `styles.py`(필요 시 header 등록), 해당 tests | 커널 파일을 다시 수정 → **unit-5R/6R이 진행 중이면 병렬 금지**(파일은 다르지만 이들이 import하는 모듈이 바뀌므로 순차) | 불가(커널 재오픈, 순차) | AC-H3: P5 프로브(그림) |
+| **unit-7R** (unit-7 재작업) | REQ-003 | unit-4P | `hwpx_writer/image_embedder.py`, `tests/hwpx_writer/test_image_embedder.py` | 커널 import만 | unit-8R 이전에는 5R/6R과 병렬 가능하나, 4P가 끝나야 착수 가능 | AC-H3 |
+| **unit-8R** (unit-8 재작업) | REQ-005, REQ-009, REQ-010 | unit-5R, unit-6R (이미지 통합은 unit-7R 이후 2차 패스) | `core/orchestrator.py`, `tests/core/test_orchestrator.py`, `tests/integration/test_feature_a_pipeline.py` | `HWPX_MIN_SUPPORTED_VERSION` 상수 의미 변경(§8-3 3번 부분 해소), 웹 `webapp/converter/executor.py`는 `convert()` 시그니처 불변이라 영향 없음 | 불가(통합 배리어, 5R/6R 완료 후) | AC-H2/AC-H3(G2): 실제 PDF 3종 |
+| 영향 없음 | — | — | unit-1/2/3/12/15/16(pdf_reader), unit-0/10/11, unit-19~25(webapp) | — | — | — |
+| 보류 유지(DEC-051) | — | G2 통과 | 07단계 통합테스트, unit-26(requirements 통합) | — | — | — |
+
+**공유 파일 목록(동시 수정 금지)**: `pdf_to_hwpx/hwpx_kernel/__init__.py`(unit-4R 독점), `pdf_to_hwpx/common/exceptions.py`(unit-4R만 추가 가능, 다른 unit은 필요 시 오케스트레이터에 요청), `tests/conftest.py`(어느 unit도 수정 금지 — 각자 `tests/<하위>/conftest.py`), `pyproject.toml`(변경 불필요: 신규 의존성 없음), `docs/harness/traceability.md`(오케스트레이터 전담).
+
+**unit-0 제안**: 별도 공통 선행 unit-0은 두지 않는다. unit-4R 자체가 커널 계약(DocContext/StyleRegistry/schema 팩토리/flow)을 고정하는 공통 선행이며, 5R/6R/7R는 이 계약이 고정된 뒤에만 착수한다. 계약이 모호해 5R/6R이 커널 수정을 요구하면 병렬을 멈추고 unit-4R을 재오픈한다.
+
+**병렬 판정 요약**: (1) unit-4R ∥ unit-27 가능. (2) G1(사용자가 프로브를 한글에서 열어 확인) 통과 전에는 5R/6R/7R/8R 착수 금지 — 초집합 골격이 수용되지 않으면 그 위에 얹는 작업이 전부 재작업이기 때문(가장 저렴한 조기 검증 지점). (3) unit-5R ∥ unit-6R 가능. (4) unit-4P는 참조 파일 도착에 종속되며 5R/6R과 동시에 돌리지 않는다. (5) unit-8R은 순차. 병렬을 늘리려고 경계를 자르지 않았다 — 커널/라이터 분리는 책임 기준이고, 병렬 가능성은 그 결과다.
+
+**한글 확인 게이트(신규, 모든 HWPX 관련 unit 공통)**: G0 = 03 v5.2 PASS(01_빈문서 수령은 값 대조·진단용으로 권장하나 unit-4R 착수는 분석서만으로 가능, 04_그림은 unit-4P/7R에만 필요). **G1** = unit-4R 완료 후 프로브 P1a/P1b/P2/P3/P4를 사용자가 한글에서 열어 확인(분석서 §12-2). **G2** = unit-8R 완료 후 실제 PDF(텍스트·표·이미지 각 1건) 변환 결과를 사용자가 열어 확인. 06 테스터는 자동 테스트가 전부 PASS여도 해당 게이트의 사용자 확인 기록(`docs/harness/units/unit-<N>-hangul-check.md`: 한글 버전, ①열림 ②경고문구 ③표시 일치 ④다른 이름으로 저장 결과)이 없으면 **"CONDITIONAL PASS(한글 확인 대기)"로만 판정하고 다음 단계로 넘기지 않는다**(자동 테스트만으로 PASS 금지).
+
+02 대비 달라진 점(사유는 §8-4): unit-4/5/6/7/8 전부 재작업 단위로 승격, unit-27(검증기)·unit-4P(그림 확장) 신설, 파일 범위에 `constants/context/styles/fonts/flow/section` 추가, 기존 v4의 "unit-5/6/7은 unit-4 완료 후 병렬 가능" 판단 유지(단 G1 게이트 추가).
+
+
 ---
 
 ## 2. 기술 스택 선정 및 근거
@@ -181,6 +264,54 @@ flowchart TD
 - **결론(확정)**: **국외이전 고지는 무조건 필요하다.** 02-planning.md v5 §8-3 A-20이 "03단계에서 실제 리전 확정 후 재확인"으로 남긴 질문에 대한 답은 "리전이 무엇이든 Yes"다 — REQ-030(개인정보처리방침)은 이 사실을 명시해야 한다(§6-2).
 - **권장 리전(참고, 확정적 웹 조사 불가로 "확인 필요" 유지)**: 한국 사용자 대상 서비스이므로 지연시간을 고려해 **Render Singapore 리전 + Neon AWS `ap-southeast-1`(Singapore) 리전**을 1순위로 검토할 것을 권고한다(2026-01 기준 지식으로 두 플랫폼 모두 싱가포르 리전을 제공한다고 알고 있으나, 실시간 재확인 불가 — 10~12단계 실제 계정 개설 시점에 대시보드에서 반드시 재확인). 확인 결과 싱가포르 리전이 없거나 조건이 맞지 않으면 미국/유럽 리전으로 대체해도 위 "국외이전 고지 필요" 결론 자체는 바뀌지 않으므로 이 선택이 설계를 막지 않는다.
 - **개인정보처리방침(REQ-030, unit-25) 반영 사항**: (a) 이전되는 국가(예: 싱가포르 또는 최종 확정 리전), (b) 이전받는 자(Render Inc., 관련 DB 운영사, Cloudflare Inc. — 정확한 법인명은 실제 계정 개설 후 각 사 이용약관에서 재확인해 채운다), (c) 이전 목적(PDF→HWPX 변환 처리 및 TTL 내 임시 저장), (d) 보유·이용기간(§6-2 TTL과 동일, 최대 60분), (e) 이전 거부 방법(이 서비스는 서버 처리가 전제이므로 "거부 시 서비스 이용 불가"임을 정직하게 고지) — 이 5개 항목은 개인정보보호법 제28조의8이 요구하는 국외이전 고지 항목에 대응한다(에이전트가 법률 자문을 대신하는 것이 아님, DEC-021 권고 재확인).
+
+### 2-4. HWPX 쓰기 전략 재설계 (v5.2 신규 — DEC-008 부분 대체)
+
+#### 2-4-1. 정정 목록 (이전 서술 중 사실과 다른 것 — 삭제하지 않고 정정됨 표기)
+
+| 이전 서술 | 출처 | 정정 |
+|---|---|---|
+| "자체 OWPML 라이터를 표준 라이브러리로 구현하면 XML 전 과정을 직접 통제하여 호환을 확보한다" | v4 §2-1, DEC-008 | **정정됨**: 스펙 지식만으로 만든 구조는 한글에서 문서로 인식되지 않았다(DEC-051). "직접 통제"의 전제였던 정확한 구조 지식이 없었다. 직접 생성 자체는 유지하되 근거를 관찰 기반으로 바꾼다 |
+| "컨테이너 골격은 한글이 저장한 최소 빈 문서를 리버스엔지니어링해 05/06단계에서 확보한다" | v4 §2-1 | DEC-017로 미이행 → v5.2에서 R1(구조 분석) + 01_빈문서.hwpx(요청)로 이행 |
+| unit-4 `container.py`/`schema.py`의 네임스페이스·태그·속성 "공개 표준 일반 지식 추정" | unit-4 docstring | **정정됨**: `opf`/`ocf` URI, `version.xml` 속성 체계, `manifest.xml` 형태, header 구조가 전부 R1과 다르다(분석서 §10) |
+| 06/07/08 단계 PASS = HWPX 호환 | traceability REQ-008 | **정정됨**: 자체 스키마 통과는 한글 수용을 보장하지 못한다. 수용 판정은 사용자 한글 확인(게이트 G1/G2)으로만 확정 |
+| "HWPUNIT=1/7200 inch는 실제 한글로 재검증하지 못했다" | unit-4 docstring | 분석서 §9에서 용지/여백 실측값으로 **검증됨** |
+| DEC-037 "좌표가 페이지 상대인지 문서 절대인지 미검증" | DEC-037 | **종결**: 그림·표는 절대좌표를 쓰지 않고 흐름 배치(§3-3-4)하므로 문제 자체가 소멸 |
+
+#### 2-4-2. 결정 (a): 기밀 없는 템플릿 채우기 vs 전면 생성
+
+| 기준 | (A) 01_빈문서.hwpx를 템플릿으로 저장소에 포함해 채우기 | (B) 코드로 전면 생성(관찰 구조를 상수로 코드화, 바이너리 미포함) |
+|---|---|---|
+| 한글 수용 확률(초기) | 높음(한글이 만든 골격) | 중간(관찰 누락 위험) → 프로브 G1 + 구조 검증기로 완화 |
+| header 동적 편집 필요성 | **있음**: charPr/paraPr/borderFill을 문서마다 추가하고 itemCnt를 갱신해야 하므로 템플릿의 이점이 header에서 상당 부분 사라짐 | 레지스트리에서 자연스럽게 생성 |
+| 라이선스·재배포(REQ-012) | 한컴 제품이 만든 파일(기본 스타일·글꼴 표·미리보기 이미지 포함)을 공개 저장소에 포함 → 저작권/상표 리스크가 불명확, 확신 없음 | 구조 사실(태그/속성 어휘)만 코드화, 한컴 산출물 바이너리 없음 |
+| 사용자 기밀 | 사용자 비기밀 파일이지만 "파일 복사·임베드 금지" 원칙과 충돌 여지 | 없음 |
+| 유지보수 | 템플릿+패치 이중 관리 | 단일 코드 경로 |
+
+**결정: (B) 참조 구조 준수형 전면 생성.** 바이너리 템플릿을 저장소에 포함하지 않는다. 01_빈문서.hwpx는 (1) 값 확정용 참고 자료(코드 상수로 옮기는 것은 관찰된 사실의 코드화), (2) 로컬 진단 입력(층 교체 D-시리즈), (3) 프로파일 추출 입력으로만 쓰며 `참조HWPX/`(`.gitignore` 처리)에서 나가지 않는다. **폴백**: G1에서 초집합 생성물이 수용되지 않고 원인이 "생성물의 미세한 값 차이"로 판명되면 그 값을 상수에 반영한다(여전히 코드 생성). 그래도 해결 불가할 때만 템플릿 임베드를 재검토하며, 그 경우는 라이선스 확신이 없으므로 규칙 A 질문으로 올린다. 근거 충분(문서 근거) + 사용자 영향 없음(내부 구현) → 규칙 A-3 예외로 자체 결정, DEC-055 후보로 기록 요청(§10-2).
+비가역성: 중간(코드 구조는 재작업 가능, 외부 영향 없음).
+
+#### 2-4-3. 결정 (f): 라이선스·기밀·재배포
+
+1. **한컴 사양 문서**: 참조하지 않았고 저장소에 포함하지 않는다(REQ-012). 구조 근거는 한글이 저장한 실물 파일의 관찰 사실뿐이다. 코드는 관찰된 요소·속성 어휘를 사용하는 독자 구현이다.
+2. **R1(사용자 문서)**: 저장소 밖(`HWPX변환완료/`, `.gitignore` 처리)에 두고 코드·테스트·픽스처·로그가 이를 읽지 않는다. 테스트는 R1을 직접 열지 않는다(로컬 전용 참조 diff 테스트는 비기밀인 01~04 파일만 대상으로 하고 파일이 없으면 skip).
+3. **비기밀 참조(01~04)**: 마찬가지로 저장소 포함 금지. 내용 없는 **구조 프로파일 JSON**(요소 경로·속성명·enum 어휘·필수 속성 집합, 텍스트/값 예시 없음)만 커밋한다(`tests/fixtures/hwpx_profile.json`, unit-27).
+4. **신규 의존성 없음**: `lxml`(BSD)·`Pillow`(HPND)는 이미 채택됨. `python-hwpx` 등 서드파티 HWPX 라이브러리의 코드는 복사·참조하지 않았다.
+5. **상표/표기**: `version.xml`의 `application`·`appVersion` 값은 기본 자체 생성기 이름으로 두는 것을 지향하되(정직한 표기), 한글이 이를 거부하면(E-V) 사용자 판단이 필요하다(§8-4 질문 Q4). 프로브 P1a(R1 관찰 값)와 P1b(자체 값)로 구분해 확인한다.
+6. **출력 메타데이터(개인정보 최소화, REQ-030 정합)**: `content.hpf`의 `opf:title`은 비우고(입력 파일명·제목을 기록하지 않음, DEC-036과 동일 원칙), `creator`/`lastsaveby`는 생성기 이름, `CreatedDate`/`ModifiedDate`는 변환 시각(UTC, `YYYY-MM-DDTHH:MM:SSZ`). zip 엔트리 타임스탬프는 기존대로 1980-01-01 고정(R1과 동일).
+
+#### 2-4-4. 결정 (e): 폰트/글꼴 대체 정책
+
+- PDF 글꼴명(예: 6자리 대문자 서브셋 접두어 `ABCDEF+`가 붙은 이름)을 그대로 header에 넣지 않는다(설치되지 않은 이름은 한글이 대체 알림을 띄울 수 있고, 서브셋 이름은 의미가 없다). `fonts.resolve_font(pdf_name)`:
+  1. 서브셋 접두어(`^[A-Z]{6}\+`) 제거, 소문자화.
+  2. 분류: 이름에 `mono|courier|consol|gulimche|돋움체|굴림체` → **mono**; 그렇지 않고 `sans|gothic|고딕|돋움|dotum|arial|helvet|gulim|굴림|malgun|맑은` → **sans**; 그렇지 않고 `serif|times|roman|batang|바탕|myeong|명조|song|mincho|garamond|georgia|palatino|cambria` → **serif**; 판별 불가 → **sans**. (`sans`를 `serif`보다 먼저 검사해 "sans-serif"를 오분류하지 않는다.)
+  3. 매핑(R1에서 TTF로 관찰된 기본 글꼴만 사용): sans → `돋움`, serif → `바탕`, mono → `돋움체`. header의 7개 lang fontface 모두 이 3개 글꼴을 같은 id(0,1,2 = 돋움, 바탕, 돋움체)로 등록하고 typeInfo는 R1 관찰 값을 그대로 쓴다.
+  4. 원본 글꼴명은 출력에 기록하지 않는다(중복 제거 + 정보 최소화).
+- 01_빈문서 수령 후 신규 문서의 한글 기본 글꼴이 확인되면 위 매핑 상수를 재검토한다(상수 표 1곳만 수정). 이탤릭은 `hh:italic`이 R1에서 관찰되지 않아 **02_글자서식 수령 전까지 미지원**(무시하고 경고 집계 1건, 표현 방식 §3-3-3).
+
+#### 2-4-5. 외부 데이터/API·약관
+이 설계 변경은 외부 API·데이터·크롤링을 사용하지 않는다(로컬 zip/XML 생성). 제공자 약관 확인 대상 없음. 참조 파일 분석은 로컬 처리로만 수행했고 외부 전송·웹 검색을 하지 않았다.
+
 
 ---
 
@@ -257,6 +388,115 @@ class ConversionJob(models.Model):
 - **보관 정책(2단계)**: (1) `input_object_key`/`output_object_key`가 가리키는 R2 오브젝트 자체는 생성 후 최대 60분(§4-3 TTL) 내 삭제된다(REQ-028). (2) `ConversionJob` 행 자체(파일명 등 식별정보가 없는 익명화된 운영 메타데이터)는 KPI 측정(02 §5-2 "업로드→다운로드 지연시간" 등)을 위해 조금 더 길게(예: 30일) 보관한 뒤 배치로 하드 삭제한다 — 이 30일 보관은 개인정보가 아닌 운영 통계 목적이므로 REQ-030 개인정보처리방침에는 "식별 불가능한 운영 통계"로 명시하고, 개인정보 보관기간(60분)과 혼동되지 않게 문구를 분리한다(§6-2).
 - **마이그레이션 전략**: 최초 마이그레이션 1개(unit-19)로 시작, 이후 필드 추가는 표준 Django 마이그레이션으로 관리한다. 기존 v4 §3-1의 IR과 달리 이 모델은 **영속 데이터**이므로 마이그레이션이 실제로 의미를 가진다(v4는 "IR은 휘발성이라 마이그레이션 개념이 없다"고 명시했던 것과 대비).
 
+### 3-3. HWPX 출력 데이터 모델과 IR→OWPML 매핑 (v5.2 신규)
+
+> 모든 구조 값은 분석서의 【관찰】 항목이다. 관찰되지 않은 것은 여기서도 "미확정"이며 구현하지 않는다.
+
+#### 3-3-1. 단위·좌표
+
+- HWPUNIT = 1/7200 inch, 1pt = 100 HWPUNIT (분석서 §9에서 A4 용지·여백 실측으로 검증). `pt_to_hwpunit(v) = round(v*100)`. 글자 크기 `charPr@height` = pt×100. 경계선 두께는 `"0.12 mm"` 형식 문자열.
+- PDF 좌표(pt, 페이지 좌상단 기준 y 아래로 증가하는 IR bbox 규약을 그대로 사용)는 흐름 배치 계산에만 쓰고 절대 좌표 속성으로 출력하지 않는다.
+
+#### 3-3-2. 스타일 레지스트리 (결정 (b): 동적 생성 + 중복 제거)
+
+- `StyleRegistry`는 **키 → id** 사전(삽입 순서 = id 순서, 결정적 출력)이다. 같은 키를 다시 요청하면 기존 id를 반환한다(interning).
+
+| 표 | 키(정규화 후) | id 시작 | 예약 항목 |
+|---|---|---|---|
+| font | (lang 공통) 글꼴 계열 3종 고정 | 0 | 0=돋움, 1=바탕, 2=돋움체 (§2-4-4) |
+| charPr | (height, font 계열, bold, textColor) | **0** | id 0 = 기본(10pt, sans, 검정) |
+| paraPr | (align, left(indent), intent, prev, lineSpacing%) | **0** | id 0 = 기본(LEFT, 0, 0, 0, 100%) |
+| borderFill | (4변 (type,width,color), diagonal 없음, fill 없음) | **1** | id 1 = 테두리 없음(secPr pageBorderFill이 참조), 표 셀 테두리는 요청 시 동적 |
+| numbering | 1개 고정(id 1) | **1** | secPr `outlineShapeIDRef=1` |
+| tabPr | id 0 고정(자식 없음) | 0 | paraPr `tabPrIDRef=0` |
+| style | id 0 = "Normal"(한글 표기 바탕글) 1개 | 0 | `paraPrIDRef=0`, `charPrIDRef=0`, `nextStyleIDRef=0`, `langID=1042` |
+
+- **양자화(키 폭발 방지)**: paraPr의 `left`/`intent`는 200 HWPUNIT(2pt) 단위, `prev`는 100 HWPUNIT(1pt) 단위로 반올림(`flow.py` 상수). charPr `height`는 정수 pt×100 그대로. 이 값들은 실험(E-분석)으로 조정 가능한 상수다.
+- **직렬화**: `serialize_header(sec_cnt)`가 분석서 §5-1~5-3의 순서(`beginNum` → `refList{fontfaces, borderFills, charProperties, tabProperties, numberings, paraProperties, styles}` → `compatibleDocument` → `docOption` → `trackchageConfig`)로 쓴다. `itemCnt`/`fontCnt`/`secCnt`는 실제 개수로 계산(불일치 불가). paraPr는 `hp:switch/case/default`로 쓰고 default 분기의 길이 값은 case 값의 정확히 2배(lineSpacing PERCENT 값은 그대로).
+- 미사용 정의(참조되지 않는 charPr 등)는 R1에도 다수 존재하므로 허용되나, 생성기는 요청된 것만 등록해 발생시키지 않는다. 등록 상한은 R1에서 관찰된 최대(charPr 131 등)를 참고치로 삼되 하드 한도는 미확인이므로, 5000건 초과 시 경고 로그를 남기고 양자화 단위를 두 배로 키운다(실측 후 조정).
+- `DocContext`: `registry`, `ids`(`tbl id`·`zOrder` 할당기: `tbl id`는 32비트 양의 정수를 문서 내 순증가로 발급, `zOrder`는 0부터 표마다 증가), `bin_data`(그림 등록부, 04_그림 후 확정). 문단 `hp:p@id`는 R1 다수값 `2147483648`로 통일(의미 미확인, P1a에서 확인).
+
+#### 3-3-3. IR → OWPML 매핑표
+
+| IR | OWPML 출력 | 세부 |
+|---|---|---|
+| `PageIR.width_pt/height_pt` | `hp:pagePr width height` (구역당 1개) | 연속된 같은 크기(HWPUNIT 반올림 후 동일) 페이지 = 1개 구역. 크기가 바뀌면 새 구역(`secCnt`, spine 추가). `landscape="WIDELY"`는 세로형(폭<높이)에서만 관찰됨 → **가로 페이지(폭>높이)는 미확정**: 폭/높이 값만 그대로 쓰고 `WIDELY`를 유지, 실험 후 결정(§8-4) |
+| 페이지 여백 | `hp:pagePr/hp:margin` | left/right = 구역 내 모든 블록 bbox의 최소 x0/페이지폭−최대 x1를 HWPUNIT로 환산해 [2835, 14173](10~50mm) 클램프. top/bottom = 최소 y0/페이지높이−최대 y1를 [4251, 14173] 클램프. `header = min(4251, top)`, `footer = min(4251, bottom)`, `gutter = 0` |
+| 구역 시작 | 첫 문단 첫 run에 `hp:secPr`(+`hp:ctrl/hp:colPr`) 주입 | `secPr` 속성/자식은 분석서 §6-2 관찰 값 그대로, `masterPageCnt=0`(바탕쪽 없음, 구역 2 형태), `outlineShapeIDRef=1`. `pageNum` ctrl 생략(관찰상 선택) |
+| `TextBlockIR` 그룹(줄) | `hp:p` 1개 + `hp:run`(charPr별) + `hp:t` + `hp:linesegarray` | 줄 묶기는 기존 unit-5 규칙(세로 겹침 ≥0.5) 유지(1줄=1문단, 문단 재구성은 시도하지 않음 — 근거 없는 휴리스틱은 과설계). **연속하는 같은 서식(charPr) 블록은 run 하나로 병합**(B0의 글자 1개 run 문제 해소) |
+| `TextBlockIR.font_name` | charPr `fontRef`(계열 대체 §2-4-4) | 원본 글꼴명 미기록 |
+| `TextBlockIR.font_size` | charPr `height` | None이면 10pt(`DEFAULT_FONT_PT=10`) |
+| `TextBlockIR.bold` | charPr 자식 `hh:bold`(빈 요소, `offset`과 `underline` 사이) | 관찰된 형태 |
+| `TextBlockIR.italic` | **미지원**(02_글자서식 전) | 무시하되 문서 단위로 1건 경고 집계(기존 `ConversionWarning` 경로, unit-8R가 집계 코드 부여) |
+| `TextBlockIR.text` | `hp:t` 텍스트 | XML 금지 문자(U+0000~0008, 000B, 000C, 000E~001F) 제거, `\t`·`\n`은 공백 1개로 치환(탭/줄바꿈 요소 형태가 R1에서 문단 텍스트로는 관찰되지 않음). 이스케이프는 lxml이 처리 |
+| `TableBlockIR` | 표를 담은 `hp:p`(run 안에 `hp:tbl` + 빈 `hp:t`) | §3-3-5 |
+| `ImageBlockIR` | 그림을 담은 `hp:p` 안 `hp:pic` | **구조 미확정(04_그림 필요)**. 원칙만 확정: 인라인(`treatAsChar` 개념), 종횡비는 픽셀 종횡비 유지, 표시 크기는 bbox가 페이지 전체 폴백이 아닐 때 bbox 크기·아니면 픽셀 크기(96dpi 가정)를 콘텐츠 폭에 맞춰 축소. unit-4P/7R 전까지 오케스트레이터는 이미지를 출력에서 제외하고 경고 집계(조용히 손상된 이미지를 내보내지 않는다) |
+| 페이지 경계 | 둘째 쪽부터 첫 문단 `pageBreak="1"` | `pageBreak="1"`은 R1 미관찰 → 실험 E-B 전까지 잠정, 실험 실패 시 자연 쪽 넘김에 의존 |
+
+**빌더 계약(v5.2, 오케스트레이터가 블록을 y 순으로 병합 후 호출)**:
+```python
+# unit-5R
+def group_text_lines(blocks: list[TextBlockIR]) -> list[TextLine]: ...        # 순수 함수(줄 묶기+run 병합용 정보)
+def line_to_paragraph(line: TextLine, ctx: DocContext, flow: FlowTracker) -> etree._Element: ...
+# unit-6R
+def table_to_paragraph(table: TableBlockIR, ctx: DocContext, flow: FlowTracker) -> etree._Element: ...
+# unit-7R (04P 이후)
+def image_to_paragraph(image: ImageBlockIR, ctx: DocContext, flow: FlowTracker) -> etree._Element: ...
+# unit-8R: 페이지마다 TextLine/TableBlockIR/ImageBlockIR를 top(y0) 오름차순으로 병합해 위 함수를 호출.
+#          bbox를 XML 속성으로 실어 정렬하던 방식(bboxPt) 폐기. 표 bbox와 겹치는 텍스트 제외(REQ-005)는 IR 단계에서 유지.
+```
+컨텍스트 밖 호출자가 빌더를 직접 쓰는 곳은 없다(웹은 `convert()`만 호출). 기존 함수 시그니처는 계약 파괴적으로 대체된다(`SCHEMA_VERSION="2.0"`).
+
+#### 3-3-4. 레이아웃 재현 수준 (결정 (c): 과설계 배제 vs 재현 품질)
+
+| 수준 | 내용 | 결정 |
+|---|---|---|
+| L0 | 읽기 순서 흐름 + 서식 없음(문단 앞 간격·들여쓰기·정렬 미반영) | 기각(재현 품질이 REQ-008 기대에 못 미침) |
+| **L1** | **흐름 배치 + 페이지 크기/여백 + 문단별 정렬(LEFT/CENTER/RIGHT)·왼쪽 들여쓰기 + 문단 앞 간격(`hc:prev`)으로 세로 간격 근사 + 줄 1개짜리 linesegarray 추정값** | **채택** |
+| L2 | 텍스트 상자/절대 위치(`treatAsChar=0`) 배치로 PDF 좌표 재현 | 기각: 편집성 상실, 미관찰 구조(부유 개체 속성)를 추측해야 하고 오차 진단이 어렵다. 필요성이 사용자 확인으로 드러나면 별도 리비전 |
+
+L1 알고리즘(`flow.py`, 상수는 모두 튜닝 대상):
+1. 콘텐츠 상자: 구역 여백으로 정한 좌우 폭 W, 좌 L, 상 T.
+2. 정렬: 줄의 (x0,x1)에서 중앙 오차 ≤0.02W이고 좌우 여유가 각각 ≥0.1W → CENTER, 오른쪽 여유 ≤0.02W이고 x0−L ≥0.3W → RIGHT, 그 외 LEFT.
+3. 들여쓰기: LEFT일 때 `left = quantize(x0−L)`(2pt 단위, 음수면 0).
+4. 줄간격: 모든 문단 `lineSpacing PERCENT 100`(R1 기본 160/158과 다름: 세로 모델을 가산적으로 만들기 위해). 100%에서 줄 높이가 글자 크기와 같다는 것은 관찰(`vertsize=글자 높이`, 분석서 §6-4)에서 이끌어낸 **추론**이므로 P4에서 확인.
+5. 문단 앞 간격: `prev = max(0, quantize((top_i − top_{i−1}) − size_{i−1}))`(1pt 단위, 상한 200pt). top끼리의 차이를 쓰므로 오차가 누적되지 않는다. 페이지 첫 문단은 `top_i − T`.
+6. `hp:linesegarray`: 문단당 1개 lineseg — `textpos=0`, `vertpos = round((top_i−T)×100)`(원본 쪽 안 위치), `vertsize = textheight = 줄 최대 글자 높이`, `baseline = round(0.85×vertsize)`, `spacing = 0`, `horzpos = left`, `horzsize = W환산 − left`, `flags = 393216`. 줄바꿈으로 실제와 달라져도 한글이 재계산할 수 있다(E-L 실험 전까지 미확정). 실험에서 생략이 안전하고 표시 차이가 없으면 생략으로 전환하는 스위치(`EMIT_LINESEGS`)를 둔다.
+7. 다열/다단 PDF는 재현하지 않는다(줄 묶기가 이미 갖는 한계, 변경 없음).
+
+#### 3-3-5. 표 매핑 (결정 (d): 셀 병합, borderFill)
+
+- 입력 `TableBlockIR`은 열 폭/행 높이 정보가 없다 → **균등 분할**: 표 폭 = `min(round(bbox_w×100), 콘텐츠 폭)`, 열 폭 = 폭÷cols(마지막 열이 나머지를 흡수해 첫 행 폭 합 = `sz.width`, R1 관찰 규칙), 행 높이 = `max(round(bbox_h×100/rows), MIN_ROW_HEIGHT=1782)`, 표 높이 = 행 높이 합. 열/행 정보를 IR에 추가하는 것은 **이번 범위 밖**(개선 후보, §8-4).
+- 병합: unit-6이 복원한 그리드 좌표를 사용해 시작 셀에만 `hp:tc`를 만들고 덮이는 셀은 만들지 않는다(R1 17/17 규칙). `cellAddr(colAddr,rowAddr)`=시작 좌표, `cellSpan(colSpan,rowSpan)`, `cellSz` 폭/높이 = 걸친 열/행 합. 각 `tr`의 `tc`는 colAddr 오름차순. `tr` 수 = rowCnt.
+- 표 속성 상수(R1 다수값): `numberingType=TABLE textWrap=TOP_AND_BOTTOM textFlow=BOTH_SIDES lock=0 dropcapstyle=None pageBreak=CELL repeatHeader=1 cellSpacing=0 noAdjust=0`, `sz widthRelTo=ABSOLUTE heightRelTo=ABSOLUTE protect=0`, `pos treatAsChar=1 affectLSpacing=0 flowWithText=1 allowOverlap=0 holdAnchorAndSO=0 vertRelTo=PARA horzRelTo=PARA vertAlign=TOP horzAlign=LEFT vertOffset=0 horzOffset=0`, `outMargin 141×4`, `inMargin 140×4`. `pageBreak`는 R1에서 NONE(14)/CELL(3) 둘 다 관찰 — 표가 쪽보다 클 때 분할 가능하도록 CELL 선택(P3/P4에서 확인).
+- 셀: `hp:tc name="" header=0 hasMargin=0 protect=0 editable=0 dirty=0 borderFillIDRef=<셀 테두리>`, `hp:subList(vertAlign=CENTER, 나머지 R1 상수)`, 셀 텍스트를 `\n`으로 나눠 문단 여러 개(R1: 셀당 1~5문단), 문단은 paraPr(LEFT, prev 0, 100%)·charPr(sans 10pt) 사용, `cellMargin 141×4`. 셀 문단에도 linesegarray(`horzsize = 셀 폭 − 282`).
+- **borderFill**: 표 전체와 모든 셀에 "사방 SOLID 0.12 mm #000000, diagonal 없음, fill 없음"(R1에서 표 15/17의 표 테두리 패턴) 1종. IR에 선 정보가 없으므로 전 셀 실선(투명 표 재현은 IR 확장 후 개선 후보).
+- 표를 담는 문단: run 안에 `hp:tbl` + 빈 `hp:t`, lineseg는 `vertsize = textheight = 표 높이`, `baseline = round(0.85×높이)`, `horzsize = 콘텐츠 폭 − left`.
+- 셀 텍스트 크기는 IR에 없으므로 `TABLE_FONT_PT=10`.
+
+#### 3-3-6. 패키지 메타 파트 (컨테이너, `HwpxPackage`)
+
+발행 목록(초집합): `mimetype`(첫 엔트리, stored, `application/hwp+zip`, 개행 없음), `version.xml`(stored), `Contents/header.xml`, `Contents/section<N>.xml`(구역 수만큼), `Preview/PrvText.txt`(UTF-8/CRLF, 본문 앞 약 1,000자, 첫 줄 `<`…`>` 형식), `settings.xml`, `META-INF/container.xml`, `Contents/content.hpf`, `META-INF/manifest.xml`(빈 `odf:manifest`). 엔트리 순서는 R1과 동일(분석서 §2), 타임스탬프 1980-01-01. `Preview/PrvImage.png`와 `masterpage0.xml`은 기본 생략(관찰 근거: 구역 2의 바탕쪽 없음, PrvImage는 container rootfile에 없음). 모든 XML은 R1 프롤로그 바이트 형태(`<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>`)로 시작하고 15개 네임스페이스를 루트에 선언. `content.hpf`: `opf:package version="" unique-identifier="" id=""`, metadata(§2-4-3 6번), manifest item(`header`, `section<N>`, `settings`), spine(`header`, 각 section `linear="yes"`). BinData 등록 방식은 04_그림 후.
+
+### 3-4. HWPX 호환 요구와 테스트 전략 (v5.2 신규, 결정 (g))
+
+교훈: **자체 스키마를 통과해도 한글이 못 열 수 있다.** 그래서 검증을 세 층으로 나눈다.
+
+| 층 | 무엇을 | 누가 | 자동화 |
+|---|---|---|---|
+| T1 단위 테스트 | 각 unit의 로직(양자화, 정렬 추론, 병합 셀 그리드, 글꼴 대체 등) | 05/06 | 자동 |
+| T2 **구조 검증기(프로파일 diff)** | 출력 zip이 참조 구조와 같은 어휘·순서·ID 무결성을 갖는가 | unit-27 + 각 unit 테스트가 호출 | 자동 |
+| T3 **한글 열기 확인** | 실제 한글이 문서로 인식·표시·저장하는가 | **사용자** | 수동(게이트 G1/G2) |
+
+**T2 검증기 규칙(V1~V13, `validator.py`)**: V1 zip 배치(첫 엔트리 `mimetype`·stored·정확한 내용, 중복 엔트리 없음). V2 필수 파트 존재(프로파일). V3 XML 적정성(프롤로그 형태, 루트 네임스페이스 선언). V4 **어휘 검사**: 프로파일에 없는 요소/속성(예: `bboxPt`, `fontName`, `charShapeIDRef`)은 위반. V5 R1에서 100% 존재하던 속성이 누락되면 위반. V6 자식 순서. V7 ID 참조 무결성(분석서 §5-4 그래프 전부). V8 `itemCnt`/`fontCnt`/`secCnt` 일치. V9 enum 값이 관찰 어휘 안에 있음. V10 표 그리드 검사(rowCnt, 덮임 합=rows×cols, 겹침 없음, `rowAddr`=`tr` 인덱스, 셀 폭 합=표 폭). V11 `hp:switch` default 값 = case 값×2. V12 모든 `hp:p`는 run≥1, 구역마다 `secPr` 정확히 1개(첫 문단 첫 run). V13 `content.hpf` manifest/spine ↔ zip 파트 일치.
+**프로파일**(`tests/fixtures/hwpx_profile.json`): 요소 경로별 {속성 집합, 필수 속성, 자식 순서, enum 어휘}만 담은 **내용 없는 JSON**. 초기본은 분석서 표를 사람이 옮겨 작성(01~04 수령 전), 수령 후 `tools/hwpx_profile_extract.py`로 01~04에서 재생성·병합. R1은 테스트 입력으로 쓰지 않는다.
+**참조 diff 테스트(로컬 전용)**: `참조HWPX/01_빈문서.hwpx` 등이 있으면 우리 빈 문서 출력과 요소 경로 집합을 비교(우리 ⊆ 참조 ∪ 허용 추가분, 참조의 필수 ⊆ 우리). 파일이 없으면 skip(CI 안전).
+**검증기 자체 검증(뮤테이션)**: B0 유형의 결함(자체 속성, `secPr` 누락, 틀린 네임스페이스, 개수 불일치, 끊긴 ID 참조)을 일부러 넣은 fixture(테스트가 스스로 생성, B0 파일 복사 금지)가 전부 FAIL해야 한다.
+
+**인수조건 추가(모든 HWPX 관련 unit 공통 규칙)**: (1) T1+T2 전부 PASS. (2) **AC-H: 사용자가 해당 게이트의 파일을 실제 한글에서 열어 확인한 기록이 있어야 unit 최종 PASS**(§1-4-3 표의 "한글 확인 인수조건" 열, 기록 양식은 분석서 §12-1). 기록이 없으면 06은 CONDITIONAL PASS. (3) 검증기 위반이 남아 있으면 자동 FAIL.
+**수용 기준(성공 정의)**: G1 — P1a/P2/P3/P4가 ①문서로 열림 ②복구/손상 경고 없음 ④다른 이름으로 저장 성공. G2 — 실제 PDF 3종이 같은 기준을 만족하고 표시 내용(문단 순서·표 구조·병합·굵게/크기)이 원본과 눈으로 일치. 세로 위치 오차의 정량 기준은 두지 않는다(L1은 흐름 배치이므로, 사용자가 "허용 가능한 수준"인지 판단 — §8-4 Q7).
+
+
 ---
 
 ## 4. API/인터페이스 명세
@@ -288,7 +528,7 @@ def convert(
 | 라우트 | 메서드 | 요청 | 응답 | 설명 |
 |---|---|---|---|---|
 | `/` | GET | 없음 | `text/html` | 업로드 폼(`<input type="file" accept=".pdf">`), OCR 체크박스, 진행률 영역, 후원 링크(REQ-025), 개인정보처리방침 링크(REQ-030) |
-| `/convert` | POST | `multipart/form-data`: `file`, `enable_ocr`, `ocr_lang` | `application/json`: `{"job_id": "<uuid4>"}` (HTTP 202) 또는 에러(아래) | (1) `limits.py`가 `Content-Length`를 사전 검사(§6-4). (2) 업로드 파일을 R2 `uploads/<job_id>.pdf`에 저장. (3) `ConversionJob(status=PENDING)` 행 생성. (4) `executor.submit_job(job_id)` 호출 후 **즉시 응답**(블로킹 없음, REQ-027). 에러 응답: 파일크기 초과 → 413, 레이트리밋 초과 → 429, 큐 포화(대기 20건 초과, §5) → 503 |
+| `/convert` | POST | `multipart/form-data`: `file`, `enable_ocr`, `ocr_lang` | `application/json`: `{"job_id": "<uuid4>"}` (HTTP 202) 또는 에러(아래) | (1) `limits.py`가 `Content-Length`를 사전 검사(§6-4). (2) 업로드 파일을 R2 `uploads/<job_id>.pdf`에 저장. (3) `ConversionJob` 행 생성 — **v5.2 정정(DEC-052·053·063, 06 OBS-9)**: 실제로는 새 job을 대기열 카운트 대상이 아닌 `EXPIRED`로 **예약 저장(업로드 파일 저장보다 먼저 — 파일 저장 직후 죽어도 행 없는 고아 파일이 생기지 않게)**한 뒤 `executor.submit_job()`이 성공하면 `PENDING`으로 **조건부 승격**(status가 EXPIRED일 때만 UPDATE, 워커가 먼저 PROCESSING으로 바꿨다면 덮어쓰지 않음)한다(이유: 행을 PENDING으로 먼저 저장하면 새 job이 대기열 카운트에서 자기 자신을 세어 실효 용량이 19건이 됨; `_submit_lock`으로 3단계를 묶음, 프로세스 로컬 — `--workers 1` 전제). 큐 포화(503)·기타 예외 시 예약 행과 업로드 파일은 즉시 삭제(BaseException 포함 finally 보장; submit 성공 표시 이후에는 워커가 입력을 읽을 수 있으므로 폐기하지 않음; 프로세스 사망 등 잔존분은 unit-22 스윕이 생성 후 70분(TTL 60+유예 10) 경과한 EXPIRED & purged_at 없음 행으로 정리, DEC-064). (4) `executor.submit_job(job_id)` 호출 후 **즉시 응답**(블로킹 없음, REQ-027). 에러 응답: 파일크기 초과 → 413, 레이트리밋 초과 → 429, 큐 포화(대기 20건 초과, §5) → 503 |
 | `/api/jobs/<uuid:job_id>/` | GET | 없음 | `application/json`: `{"status": "...", "progress": {...}, "warnings": [...], "errors": [...]}` (job_id 없음/만료됨 → 404) | 브라우저 JS가 0.5~1초 간격 폴링(v4와 동일 메커니즘, 서버측 저장소만 인메모리 dict→DB 행으로 변경). **응답은 오직 DB 조회**이며 라이브러리를 다시 호출하지 않는다 |
 | `/download/<uuid:job_id>/` | GET | 없음 | 완료+성공: `application/octet-stream`(`Content-Disposition: attachment; filename="converted.hwpx"`, HTTP 200). 완료+실패(status=DONE, result_success=False): `application/json`으로 `result_errors`를 그대로 노출(**HTTP 422**). 인프라 실패(status=FAILED): `application/json`으로 일반 오류 메시지만 노출, 내부 원인 비노출(**HTTP 422**, §3-2 상태전이 규칙 참고). 진행중: 409. 없음/이미 만료: 404 | **Django 뷰가 R2에서 바이트를 읽어 그대로 스트리밍(proxy)한다**(DEC-036 — presigned URL 리다이렉트 방식은 v1에서 채택하지 않음, 근거 §8-1). 스트리밍이 끝나면 `downloaded_at`을 기록하고 **해당 job의 R2 오브젝트(업로드본+결과본)를 즉시 삭제**한다(REQ-028의 "다운로드 후 즉시 삭제" 조항을 문자 그대로 구현) |
 | `/healthz` | GET | 없음 | `text/plain: "ok"` | AI-AUTO-WORK 패턴 그대로 재사용 — DB 접속 확인 없는 얕은 헬스체크(Neon 콜드스타트 오탐 방지, 동일 근거) |
@@ -446,9 +686,40 @@ v4까지의 `04-ux-design.md`는 "로컬 웹서버(127.0.0.1), 단일 사용자,
 
 1. **Render 무료 플랜의 정확한 리소스 한도(RAM/CPU, Background Worker 무료 제공 여부)** — 이번 세션은 실시간 웹 조사 권한이 없어(Read/Grep/Glob/Bash만 보유) 확정하지 못했다. §2-1의 DEC-031(인프로세스 스레드풀 채택) 자체는 "Background Worker 무료 미제공"이라는 가정 위에서도, 제공된다는 것이 확인되더라도 "더 나쁜 선택"이 되지 않는(단순한 v1 선택) 결정이라 착수를 막지 않는다. **10~12단계(실제 계정 개설) 착수 전 반드시 재확인.**
 2. **Render/Neon의 정확한 리전 목록(싱가포르 포함 여부)** — §2-3. 최종 리전 선택과 무관하게 "국외이전 고지 필요"라는 결론(REQ-030)은 바뀌지 않으므로 착수를 막지 않는다.
-3. **HWPX 지원 대상 버전의 정확한 번호** — v4 §8-3 항목 3 그대로 미해결 유지(변경 없음, 배포형태와 무관한 사안).
+3. **HWPX 지원 대상 버전의 정확한 번호** — v4 §8-3 항목 3 그대로 미해결 유지(변경 없음, 배포형태와 무관한 사안). **(v5.2 부분 해소: R1 관찰로 한글 2020/2022 계열 `appVersion` 9,6,1,10097, `xmlVersion` 1.4가 확인됐다(분석서 §3-1). 최소 지원 버전의 하한은 여전히 미확인 — 01_빈문서 수령 후 재확인.)**
 4. **hCaptcha 실제 도입 시점** — §6-4, "필요시"의 구체적 트리거(예: 일일 429 발생 건수 N회 초과) 자체는 아직 정의하지 않았다 — 배포 후 실측 데이터를 보고 운영자가 판단할 사안으로 남긴다(지금 임의로 숫자를 정하면 오히려 근거 없는 확정이 된다).
 5. **서버 호스팅 예산 상한(02 A-16)** — 02가 사용자 가치판단 영역으로 남긴 것을 그대로 승계한다. 본 설계는 "무료 플랜에서 시작 가능한 구조"(Redis 없음, 별도 유료 워커 없음)로 설계했으나, 실제 운영 중 무료 한도를 넘는 시점의 예산 승인은 여전히 사용자 확인 필요 사안이다.
+
+### 8-4. HWPX 재설계 트레이드오프·02 대비 변경·질문 (v5.2 신규)
+
+**02/v5 대비 달라진 점과 사유**
+1. unit-4/5/6/7/8을 "Verified"에서 **재작업 단위**로 되돌림 — 사유: DEC-051(한글이 문서로 인식하지 않음). 자체 스키마 기준 PASS는 호환 증거가 아니었다(정정됨).
+2. 신규 unit-27(구조 검증기), unit-4P(그림 요소 확장) — 사유: 자동 구조 검증 필요, 그림 구조 미관찰(참조 파일 대기).
+3. G1/G2 사용자 확인 게이트 신설 — 사유: 규칙 F 재발 방지, 자체 테스트의 사각지대 보완.
+4. v4의 "unit-5/6/7 병렬" 유지하되 G1 통과 후로 조정 — 사유: 골격이 수용되지 않으면 위에 얹는 작업 전부가 재작업.
+5. IR·unit-1/2/3 무변경 유지 — 사유: 표 열폭/선 정보 IR 확장은 범위 확대(개선 후보).
+
+**트레이드오프**
+| 결정 | 얻는 것 | 잃는 것/한계 | 되돌리기 |
+|---|---|---|---|
+| (a) 전면 생성(B) | 라이선스/기밀 리스크 제거, 단일 경로 | 초기 수용 확률이 템플릿보다 낮음 → G1과 진단 D-시리즈로 완화 | 쉬움(폴백 경로 명시) |
+| (b) 레지스트리 interning + 양자화 | header 크기 제어, 결정적 출력 | 양자화로 위치 오차 ±1~2pt | 쉬움(상수) |
+| (c) L1 흐름 배치 | 편집 가능한 문서, 미관찰 구조 추측 없음 | PDF와 픽셀 단위 일치 불가, 폰트 폭 차이로 줄바꿈이 원본과 다를 수 있음 | 중간(L2는 별도 리비전) |
+| (d) 균등 열폭·전 셀 실선 | IR 무변경 | 실제 열폭·투명 표 미재현 | 개선 후보(IR 확장) |
+| (e) 글꼴 3종 대체 | 대체 알림 최소화, 관찰된 글꼴만 사용 | 원본 글꼴 미보존 | 쉬움(상수 표) |
+| 초집합 발행 | 수용 확률 최대 | 불필요 파트 포함 가능 | 쉬움(실험 후 축소) |
+
+**규칙 A 질문 목록(사용자 답변 필요/요청)**
+- **Q1 (필수, 착수 차단 아님·일부 unit 차단)** 추가 참조 파일: `참조HWPX/01_빈문서.hwpx`(빈 골격·신규 문서 기본값 확인, G1 진단 입력), `참조HWPX/04_그림.hwpx`(그림 개체 `hp:pic`·BinData 구조 — **없으면 unit-4P/7R 착수 불가, 그림은 출력에서 제외**). 권장: `02_글자서식.hwpx`(`hh:italic` 형태). 선택: `03_표.hwpx`(신규 표 기본값), 가로 방향 빈 문서 1개(`landscape` 값). 한글 버전(도움말 > 한글 정보)도 알려 주세요.
+- **Q2 (게이트)** G1(unit-4R 후)·G2(unit-8R 후)에서 사용자가 프로브/변환 결과를 한글에서 열어 분석서 §12-1 양식으로 알려 주는 것에 동의하는지.
+- **Q3 (선택)** 01_빈문서의 내용을 코드 상수로 옮기는 것(파일 자체 미포함)에 이의가 없는지 — 템플릿 바이너리 임베드는 라이선스 확신이 없어 하지 않기로 했다.
+- **Q4 (실험 후 필요 시)** `version.xml`의 `application`/`appVersion`을 자체 이름으로 쓰면 한글이 거부하는 경우, 한글 표기를 모사할지(정직한 표기 vs 호환) 사용자 판단 필요.
+- **Q5 (비차단)** 가로 방향 페이지, 미관찰 이탤릭 표현은 참조 파일 도착 전까지 미지원/잠정 처리로 두는 것에 동의하는지.
+- **Q6 (비차단)** 표 열폭·선 정보를 IR에 추가하는 개선(unit-3 재작업 포함)을 이번 재작업 범위에 넣을지 나중으로 미룰지(기본: 미룸).
+- **Q7 (비차단, G2 후 확인)** 흐름 배치(L1) 수준의 재현 품질이 기대에 맞는지. 절대 위치 재현(L2)을 원하면 편집성 저하·미관찰 구조 추측이 뒤따르므로 별도 리비전이 필요.
+
+**미해결(사실 확정 못 함, 분석서 §13)**: `hp:pic`/BinData, `hh:italic`, `landscape` 가로 값, `hp:p@id`·`pageBreak="1"`·`hasMargin`·lineseg `flags` 의미, 최소 필수 파트(실험 E-시리즈). 이 중 어느 것도 unit-4R/unit-27/unit-5R/unit-6R 착수를 막지 않는다(초집합 발행 + 구조 검증기 + 게이트로 대응). unit-7R만 04_그림 대기.
+
 
 ---
 
@@ -461,6 +732,7 @@ v4까지의 `04-ux-design.md`는 "로컬 웹서버(127.0.0.1), 단일 사용자,
 | 2026-09-27 | v4 | DEC-018 리비전: GUI를 Tkinter → 로컬 웹서버(Bottle, 127.0.0.1)+브라우저 UI로 전환 | 사용자 요청 |
 | 2026-09-28 | **v5** | **DEC-020~028 대규모 리비전 — "로컬 전용 1인 도구"→"공개 웹 변환 서비스"로 근본 전환.** §1(아키텍처 개요 전면 재작성, Django/webapp 계층 신설, 작업단위 확정표에 unit-19~26 확정 및 unit-9/13 v5 처리 반영), §2(웹 계층 신규 스택·라이선스·ToS 확인, 인프라 리전/국외이전 판단 신설), §3(`ConversionJob` 모델 신규, IR은 변경 없음 재확인), §4(핵심 라이브러리 API 변경없음 재확인 + 웹 API 계약 전면 재작성), §5(파일크기 50MB/타임아웃 5분/동시처리 2건 등 구체 수치 확정), §6(개인정보 처리 원칙 전면 재작성, net_guard 역할반전, 레이트리밋/캡차 확정), §7(장애알림을 GitHub Issues에서 Django ADMINS 이메일 자동알림으로 전환), §8(트레이드오프 9건, 04단계 인수인계 7건, 미해결 5건), §10(신규 — traceability.md 설계매핑 제안). **핵심 변환 로직(`pdf_to_hwpx/` 패키지, unit-0~8/12/15~18)은 이번 리비전으로 단 한 줄도 변경되지 않음**(§0 전제). `decisions.md`에 DEC-029~036 신규 기록(TTL/자원상한/비동기큐기술/레이트리밋/unit-9,13 처리/인프라리전/다운로드방식·파일명 미저장). `traceability.md`는 이번 호출에서 직접 수정하지 않음(§10 제안을 오케스트레이터가 반영). | 사용자의 신규 요구사항 변경(규칙 F와 유사하나 결함 수정이 아니라 명시적 요구사항 변경) — `docs/harness/decisions.md` DEC-020~036, `02-planning.md` v5 |
 | 2026-09-28 | v5(1차 내부검증 정정) | 1차 내부검증(작성자 관점)에서 발견한 4건 결함 수정: (1) `config/middleware.py::XForwardedForMiddleware`(AI-AUTO-WORK 원본 재사용) 누락 — REQ-026 레이트리밋이 Render 리버스프록시 뒤에서 REMOTE_ADDR 정규화 없이는 사실상 무력화되는 문제를 §1-2/§1-3(unit-19/23)/§6-4에 명시 추가. (2) `socket.create_connection` 몽키패치(unit-9)가 `psycopg`(libpq, C 라이브러리)를 우회한다는 알려진 한계를 §6-3에 명시(보안 저하는 아님 — 우회되는 대상이 애초에 허용 대상인 Neon이므로). (3) ThreadPoolExecutor "동시 2건 실행"이 GIL로 인해 진짜 병렬가속이 아니라는 점을 §5에 명시해 구현자의 성능 기대치 오해를 예방. (4) `GET /download/<job_id>/` "완료+실패" 응답의 HTTP 상태코드가 미정의였던 것을 422로 확정(§4-4). | 규칙 B 1차 내부검증(작성자 관점) — 상세 근거는 `verify-log_03-system-design.md` v5 절 참고 |
+| 2026-09-29 | **v5.2** | **DEC-051 규칙 F 근본 원인 단계 리비전 — HWPX 출력 구조 근본 재설계.** §1-4(신규: 계층 다이어그램, 커널/라이터 모듈 경계, 작업 단위 확정표 v5.2: unit-4R/4P/5R/6R/7R/8R 재작업 + unit-27 신설, 게이트 G0~G2, 병렬 판정), §2-4(신규: 정정 목록, 결정 (a) 전면 생성·템플릿 미포함, (f) 라이선스·기밀·재배포·메타데이터, (e) 글꼴 대체), §3-3(신규: 단위 검증, StyleRegistry (b), IR→OWPML 매핑, 레이아웃 L1 (c), 표 매핑 (d), 패키지 파트), §3-4(신규: 3층 테스트 전략·구조 검증기 V1~V13·AC-H 인수조건 (g)), §8-4(신규: 02 대비 변경·트레이드오프·질문 Q1~Q7), §10-2(신규: traceability 매핑·DEC-055~062 후보·공유 문서 갱신 요청). 헤더에 v5.2 및 **정정됨** 표기(DEC-008 근거, v4 §2-1, `pdf_to_hwpx` 무수정 전제의 적용 범위, v5 §1-3의 unit-4~8 행). §4-4·§5·§6 등 HWPX 무관 절 무변경. 분석서 `docs/harness/analysis/hwpx-reference-structure.md` 신규. | 사용자가 변환 결과를 한글에서 열자 문서로 인식되지 않음(DEC-051), 참조 파일 R1 제공(DEC-054) — 상세 검증은 `verify-log_03-system-design.md` v5.2 절 |
 
 ---
 
@@ -486,6 +758,23 @@ v4까지의 `04-ux-design.md`는 "로컬 웹서버(127.0.0.1), 단일 사용자,
 | REQ-030 | `03 §2-3(국외이전 판단)`, `§6-2` | 작업단위는 unit-25 유지, "국외이전 고지 필요 여부"가 이번에 "필요(확정)"로 해소됨 — traceability.md 비고란에 반영 제안 |
 
 **traceability.md 상단 안내문 추가 제안**: "**03단계 v5 동기화(2026-09-28)**: `03-system-design.md`가 v4(Bottle/127.0.0.1)에서 v5(Django/Render/Neon/R2)로 전면 리비전됨에 따라 REQ-001/010/011/015/021/026~030의 '설계 매핑' 컬럼이 갱신되었다. unit-9는 폐기가 아니라 역할 반전(아웃바운드 화이트리스트), unit-13은 완전 폐기(unit-20이 대체)로 확정되었다. **unit-0~8/12/15~18(핵심 변환 로직)의 구현상태·단위테스트·결함이력은 이 동기화로 전혀 영향받지 않으며 그대로 보존된다.**"
+
+### 10-2. v5.2 설계 매핑 추가 제안 및 공유 문서 갱신 요청 (오케스트레이터 반영 대기 — traceability.md·decisions.md는 이번 호출에서 수정하지 않았다)
+
+| REQ-ID | "설계 매핑(설계서 §)" 추가값 | 비고 |
+|---|---|---|
+| REQ-002 | `03 §1-4(unit-5R), §3-3-3~3-3-4(줄→문단·L1 레이아웃)` | 구현상태: Verified → **재작업 필요(DEC-051)**, unit-5R |
+| REQ-003 | `03 §1-4(unit-4P/7R), §3-3-3(그림 원칙)` | 구조 미확정, 04_그림 대기. DEC-037 종결(§2-4-1) |
+| REQ-004 | `03 §1-4(unit-6R), §3-3-5(표 매핑)` | 재작업 필요 |
+| REQ-005/009/010 | `03 §1-4(unit-8R), §3-3-3(빌더 계약)` | unit-8 재작업 |
+| REQ-008 | `03 §2-4, §3-3, §3-4, 분석서` | 구현상태 Verified → **재작업 필요**, "06/07/08 PASS = 호환" 문구 정정, 인수조건에 AC-H(사용자 한글 확인) 추가, unit-27 신규 |
+| REQ-012 | `03 §2-4-3(라이선스·기밀·재배포)` | 참조 파일 비포함 원칙 |
+
+**공유 문서 갱신 요청(REQ-ID/DEC 후보, 컬럼, 값)**
+- traceability.md: 위 표의 REQ-002/003/004/005/008/009/010 행 "구현" 컬럼을 "재작업 대기(DEC-051, 03 v5.2)"로, "설계 매핑" 컬럼에 위 값 추가, REQ-008 "단위 테스트/통합 테스트" 컬럼의 PASS 표기에 "(자체 스키마 기준, 한글 수용 미검증 — 정정됨)" 주석, "작업 단위" 컬럼에 unit-4R/4P/5R/6R/7R/8R/27 반영. 상단 안내문에 "v5.2 동기화" 추가.
+- decisions.md 후보(모두 근거·비가역성은 본 설계서 해당 절 참조): **DEC-055** HWPX 생성 방식 = 참조 구조 준수형 전면 생성·템플릿 바이너리 미포함(§2-4-2, 비가역성 중간, DEC-008 부분 대체) / **DEC-056** StyleRegistry interning·양자화·id 시작값(borderFill·numbering=1, 나머지=0)(§3-3-2) / **DEC-057** 레이아웃 재현 수준 L1(흐름+prev+정렬), 절대 위치 기각, DEC-037 종결(§3-3-4) / **DEC-058** 표 매핑(균등 분할·전 셀 실선·IR 무변경)(§3-3-5) / **DEC-059** 글꼴 대체 3종 정책(§2-4-4) / **DEC-060** 참조 파일 취급·라이선스·출력 메타데이터 최소화(§2-4-3) / **DEC-061** 테스트 전략 3층·AC-H 인수조건·CONDITIONAL PASS 규칙(§3-4) / **DEC-062** 작업 단위 재편·게이트 G0~G2·unit-27 신설·07/unit-26 보류 유지(§1-4-3).
+- unit-4~8 note/test 문서: 재작업 시 05가 새 note를 작성(기존 "Verified"는 이력 보존).
+
 
 ---
 

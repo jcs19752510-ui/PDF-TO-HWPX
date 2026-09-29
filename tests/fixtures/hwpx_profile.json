@@ -1,0 +1,3474 @@
+{
+ "profile_version": "1",
+ "generator": "tools/hwpx_profile_extract.py",
+ "content_policy": "structure-only: names, order relations, flags, standard enum vocabulary",
+ "zip": {
+  "first_entry": "mimetype",
+  "mimetype_method": "stored",
+  "mimetype_content": "application/hwp+zip",
+  "observed_order": [
+   "mimetype",
+   "version.xml",
+   "Contents/header.xml",
+   "Contents/masterpage{N}.xml",
+   "Contents/section{N}.xml",
+   "Preview/PrvText.txt",
+   "settings.xml",
+   "Preview/PrvImage.png",
+   "META-INF/container.xml",
+   "Contents/content.hpf",
+   "META-INF/manifest.xml"
+  ]
+ },
+ "xml_prolog": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\" ?>",
+ "namespaces": {
+  "config": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
+  "dc": "http://purl.org/dc/elements/1.1/",
+  "epub": "http://www.idpf.org/2007/ops",
+  "ha": "http://www.hancom.co.kr/hwpml/2011/app",
+  "hc": "http://www.hancom.co.kr/hwpml/2011/core",
+  "hh": "http://www.hancom.co.kr/hwpml/2011/head",
+  "hhs": "http://www.hancom.co.kr/hwpml/2011/history",
+  "hm": "http://www.hancom.co.kr/hwpml/2011/master-page",
+  "hp": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+  "hp10": "http://www.hancom.co.kr/hwpml/2016/paragraph",
+  "hpf": "http://www.hancom.co.kr/schema/2011/hpf",
+  "hs": "http://www.hancom.co.kr/hwpml/2011/section",
+  "hv": "http://www.hancom.co.kr/hwpml/2011/version",
+  "hwpunitchar": "http://www.hancom.co.kr/hwpml/2016/HwpUnitChar",
+  "ocf": "urn:oasis:names:tc:opendocument:xmlns:container",
+  "odf": "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0",
+  "ooxmlchart": "http://www.hancom.co.kr/hwpml/2016/ooxmlchart",
+  "opf": "http://www.idpf.org/2007/opf/"
+ },
+ "parts": {
+  "Contents/content.hpf": {
+   "kind": "xml",
+   "role": "hpf",
+   "root": "opf:package",
+   "required": true,
+   "root_ns": {
+    "config": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
+    "dc": "http://purl.org/dc/elements/1.1/",
+    "epub": "http://www.idpf.org/2007/ops",
+    "ha": "http://www.hancom.co.kr/hwpml/2011/app",
+    "hc": "http://www.hancom.co.kr/hwpml/2011/core",
+    "hh": "http://www.hancom.co.kr/hwpml/2011/head",
+    "hhs": "http://www.hancom.co.kr/hwpml/2011/history",
+    "hm": "http://www.hancom.co.kr/hwpml/2011/master-page",
+    "hp": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+    "hp10": "http://www.hancom.co.kr/hwpml/2016/paragraph",
+    "hpf": "http://www.hancom.co.kr/schema/2011/hpf",
+    "hs": "http://www.hancom.co.kr/hwpml/2011/section",
+    "hwpunitchar": "http://www.hancom.co.kr/hwpml/2016/HwpUnitChar",
+    "ooxmlchart": "http://www.hancom.co.kr/hwpml/2016/ooxmlchart",
+    "opf": "http://www.idpf.org/2007/opf/"
+   },
+   "observed_compression": "deflated"
+  },
+  "Contents/header.xml": {
+   "kind": "xml",
+   "role": "header",
+   "root": "hh:head",
+   "required": true,
+   "root_ns": {
+    "config": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
+    "dc": "http://purl.org/dc/elements/1.1/",
+    "epub": "http://www.idpf.org/2007/ops",
+    "ha": "http://www.hancom.co.kr/hwpml/2011/app",
+    "hc": "http://www.hancom.co.kr/hwpml/2011/core",
+    "hh": "http://www.hancom.co.kr/hwpml/2011/head",
+    "hhs": "http://www.hancom.co.kr/hwpml/2011/history",
+    "hm": "http://www.hancom.co.kr/hwpml/2011/master-page",
+    "hp": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+    "hp10": "http://www.hancom.co.kr/hwpml/2016/paragraph",
+    "hpf": "http://www.hancom.co.kr/schema/2011/hpf",
+    "hs": "http://www.hancom.co.kr/hwpml/2011/section",
+    "hwpunitchar": "http://www.hancom.co.kr/hwpml/2016/HwpUnitChar",
+    "ooxmlchart": "http://www.hancom.co.kr/hwpml/2016/ooxmlchart",
+    "opf": "http://www.idpf.org/2007/opf/"
+   },
+   "in_manifest": true,
+   "in_spine": true,
+   "observed_compression": "deflated"
+  },
+  "Contents/masterpage{N}.xml": {
+   "kind": "xml",
+   "role": "masterpage",
+   "root": "masterPage",
+   "required": false,
+   "root_ns": {
+    "config": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
+    "dc": "http://purl.org/dc/elements/1.1/",
+    "epub": "http://www.idpf.org/2007/ops",
+    "ha": "http://www.hancom.co.kr/hwpml/2011/app",
+    "hc": "http://www.hancom.co.kr/hwpml/2011/core",
+    "hh": "http://www.hancom.co.kr/hwpml/2011/head",
+    "hhs": "http://www.hancom.co.kr/hwpml/2011/history",
+    "hm": "http://www.hancom.co.kr/hwpml/2011/master-page",
+    "hp": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+    "hp10": "http://www.hancom.co.kr/hwpml/2016/paragraph",
+    "hpf": "http://www.hancom.co.kr/schema/2011/hpf",
+    "hs": "http://www.hancom.co.kr/hwpml/2011/section",
+    "hwpunitchar": "http://www.hancom.co.kr/hwpml/2016/HwpUnitChar",
+    "ooxmlchart": "http://www.hancom.co.kr/hwpml/2016/ooxmlchart",
+    "opf": "http://www.idpf.org/2007/opf/"
+   },
+   "in_manifest": true,
+   "in_spine": false,
+   "observed_compression": "deflated"
+  },
+  "Contents/section{N}.xml": {
+   "kind": "xml",
+   "role": "section",
+   "root": "hs:sec",
+   "required": true,
+   "root_ns": {
+    "config": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
+    "dc": "http://purl.org/dc/elements/1.1/",
+    "epub": "http://www.idpf.org/2007/ops",
+    "ha": "http://www.hancom.co.kr/hwpml/2011/app",
+    "hc": "http://www.hancom.co.kr/hwpml/2011/core",
+    "hh": "http://www.hancom.co.kr/hwpml/2011/head",
+    "hhs": "http://www.hancom.co.kr/hwpml/2011/history",
+    "hm": "http://www.hancom.co.kr/hwpml/2011/master-page",
+    "hp": "http://www.hancom.co.kr/hwpml/2011/paragraph",
+    "hp10": "http://www.hancom.co.kr/hwpml/2016/paragraph",
+    "hpf": "http://www.hancom.co.kr/schema/2011/hpf",
+    "hs": "http://www.hancom.co.kr/hwpml/2011/section",
+    "hwpunitchar": "http://www.hancom.co.kr/hwpml/2016/HwpUnitChar",
+    "ooxmlchart": "http://www.hancom.co.kr/hwpml/2016/ooxmlchart",
+    "opf": "http://www.idpf.org/2007/opf/"
+   },
+   "in_manifest": true,
+   "in_spine": true,
+   "observed_compression": "deflated"
+  },
+  "META-INF/container.xml": {
+   "kind": "xml",
+   "role": "container",
+   "root": "ocf:container",
+   "required": true,
+   "root_ns": {
+    "hpf": "http://www.hancom.co.kr/schema/2011/hpf",
+    "ocf": "urn:oasis:names:tc:opendocument:xmlns:container"
+   },
+   "in_manifest": false,
+   "in_spine": false,
+   "observed_compression": "deflated"
+  },
+  "META-INF/manifest.xml": {
+   "kind": "xml",
+   "role": "manifest",
+   "root": "odf:manifest",
+   "required": true,
+   "root_ns": {
+    "odf": "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"
+   },
+   "in_manifest": false,
+   "in_spine": false,
+   "observed_compression": "deflated"
+  },
+  "Preview/PrvImage.png": {
+   "kind": "binary",
+   "role": "prvimage",
+   "required": false,
+   "in_manifest": false,
+   "in_spine": false,
+   "observed_compression": "stored"
+  },
+  "Preview/PrvText.txt": {
+   "kind": "text",
+   "role": "prvtext",
+   "required": true,
+   "in_manifest": false,
+   "in_spine": false,
+   "observed_compression": "deflated"
+  },
+  "mimetype": {
+   "kind": "raw",
+   "role": "mimetype",
+   "required": true,
+   "observed_compression": "stored"
+  },
+  "settings.xml": {
+   "kind": "xml",
+   "role": "settings",
+   "root": "ha:HWPApplicationSetting",
+   "required": true,
+   "root_ns": {
+    "config": "urn:oasis:names:tc:opendocument:xmlns:config:1.0",
+    "ha": "http://www.hancom.co.kr/hwpml/2011/app"
+   },
+   "in_manifest": true,
+   "in_spine": false,
+   "observed_compression": "deflated"
+  },
+  "version.xml": {
+   "kind": "xml",
+   "role": "version",
+   "root": "hv:HCFVersion",
+   "required": true,
+   "root_ns": {
+    "hv": "http://www.hancom.co.kr/hwpml/2011/version"
+   },
+   "in_manifest": false,
+   "in_spine": false,
+   "observed_compression": "stored"
+  }
+ },
+ "elements": {
+  "config:config-item": {
+   "attrs": {
+    "name": {
+     "required": true
+    },
+    "type": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": true
+  },
+  "config:config-item-set": {
+   "attrs": {
+    "name": {
+     "required": true
+    }
+   },
+   "children": [
+    "config:config-item"
+   ],
+   "required_children": [
+    "config:config-item"
+   ],
+   "text": false
+  },
+  "ha:CaretPosition": {
+   "attrs": {
+    "listIDRef": {
+     "required": true
+    },
+    "paraIDRef": {
+     "required": true
+    },
+    "pos": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "ha:HWPApplicationSetting": {
+   "attrs": {},
+   "children": [
+    "config:config-item-set",
+    "ha:CaretPosition"
+   ],
+   "required_children": [
+    "config:config-item-set",
+    "ha:CaretPosition"
+   ],
+   "text": false,
+   "order": {
+    "ha:CaretPosition": [
+     "config:config-item-set"
+    ]
+   }
+  },
+  "hc:fillBrush": {
+   "attrs": {},
+   "children": [
+    "hc:winBrush"
+   ],
+   "required_children": [
+    "hc:winBrush"
+   ],
+   "text": false
+  },
+  "hc:intent": {
+   "attrs": {
+    "unit": {
+     "required": true,
+     "enum": [
+      "HWPUNIT"
+     ]
+    },
+    "value": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hc:left": {
+   "attrs": {
+    "unit": {
+     "required": true,
+     "enum": [
+      "HWPUNIT"
+     ]
+    },
+    "value": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hc:next": {
+   "attrs": {
+    "unit": {
+     "required": true,
+     "enum": [
+      "HWPUNIT"
+     ]
+    },
+    "value": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hc:prev": {
+   "attrs": {
+    "unit": {
+     "required": true,
+     "enum": [
+      "HWPUNIT"
+     ]
+    },
+    "value": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hc:right": {
+   "attrs": {
+    "unit": {
+     "required": true,
+     "enum": [
+      "HWPUNIT"
+     ]
+    },
+    "value": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hc:winBrush": {
+   "attrs": {
+    "alpha": {
+     "required": true
+    },
+    "faceColor": {
+     "required": true
+    },
+    "hatchColor": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:align": {
+   "attrs": {
+    "horizontal": {
+     "required": true,
+     "enum": [
+      "CENTER",
+      "JUSTIFY",
+      "LEFT",
+      "RIGHT"
+     ]
+    },
+    "vertical": {
+     "required": true,
+     "enum": [
+      "BASELINE"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:autoSpacing": {
+   "attrs": {
+    "eAsianEng": {
+     "required": true
+    },
+    "eAsianNum": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:backSlash": {
+   "attrs": {
+    "Crooked": {
+     "required": true
+    },
+    "isCounter": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "CENTER_BELOW",
+      "NONE"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:beginNum": {
+   "attrs": {
+    "endnote": {
+     "required": true
+    },
+    "equation": {
+     "required": true
+    },
+    "footnote": {
+     "required": true
+    },
+    "page": {
+     "required": true
+    },
+    "pic": {
+     "required": true
+    },
+    "tbl": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:bold": {
+   "attrs": {},
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:border": {
+   "attrs": {
+    "borderFillIDRef": {
+     "required": true
+    },
+    "connect": {
+     "required": true
+    },
+    "ignoreMargin": {
+     "required": true
+    },
+    "offsetBottom": {
+     "required": true
+    },
+    "offsetLeft": {
+     "required": true
+    },
+    "offsetRight": {
+     "required": true
+    },
+    "offsetTop": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:borderFill": {
+   "attrs": {
+    "breakCellSeparateLine": {
+     "required": true
+    },
+    "centerLine": {
+     "required": true,
+     "enum": [
+      "NONE"
+     ]
+    },
+    "id": {
+     "required": true
+    },
+    "shadow": {
+     "required": true
+    },
+    "threeD": {
+     "required": true
+    }
+   },
+   "children": [
+    "hc:fillBrush",
+    "hh:backSlash",
+    "hh:bottomBorder",
+    "hh:diagonal",
+    "hh:leftBorder",
+    "hh:rightBorder",
+    "hh:slash",
+    "hh:topBorder"
+   ],
+   "required_children": [
+    "hh:backSlash",
+    "hh:bottomBorder",
+    "hh:leftBorder",
+    "hh:rightBorder",
+    "hh:slash",
+    "hh:topBorder"
+   ],
+   "text": false,
+   "order": {
+    "hh:backSlash": [
+     "hc:fillBrush",
+     "hh:bottomBorder",
+     "hh:diagonal",
+     "hh:leftBorder",
+     "hh:rightBorder",
+     "hh:topBorder"
+    ],
+    "hh:bottomBorder": [
+     "hc:fillBrush",
+     "hh:diagonal"
+    ],
+    "hh:diagonal": [
+     "hc:fillBrush"
+    ],
+    "hh:leftBorder": [
+     "hc:fillBrush",
+     "hh:bottomBorder",
+     "hh:diagonal",
+     "hh:rightBorder",
+     "hh:topBorder"
+    ],
+    "hh:rightBorder": [
+     "hc:fillBrush",
+     "hh:bottomBorder",
+     "hh:diagonal",
+     "hh:topBorder"
+    ],
+    "hh:slash": [
+     "hc:fillBrush",
+     "hh:backSlash",
+     "hh:bottomBorder",
+     "hh:diagonal",
+     "hh:leftBorder",
+     "hh:rightBorder",
+     "hh:topBorder"
+    ],
+    "hh:topBorder": [
+     "hc:fillBrush",
+     "hh:bottomBorder",
+     "hh:diagonal"
+    ]
+   }
+  },
+  "hh:borderFills": {
+   "attrs": {
+    "itemCnt": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:borderFill"
+   ],
+   "required_children": [
+    "hh:borderFill"
+   ],
+   "text": false,
+   "count_attrs": {
+    "itemCnt": "hh:borderFill"
+   }
+  },
+  "hh:bottomBorder": {
+   "attrs": {
+    "color": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "DOUBLE_SLIM",
+      "NONE",
+      "SOLID"
+     ]
+    },
+    "width": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:breakSetting": {
+   "attrs": {
+    "breakLatinWord": {
+     "required": true,
+     "enum": [
+      "BREAK_WORD",
+      "KEEP_WORD"
+     ]
+    },
+    "breakNonLatinWord": {
+     "required": true,
+     "enum": [
+      "BREAK_WORD",
+      "KEEP_WORD"
+     ]
+    },
+    "keepLines": {
+     "required": true
+    },
+    "keepWithNext": {
+     "required": true
+    },
+    "lineWrap": {
+     "required": true,
+     "enum": [
+      "BREAK"
+     ]
+    },
+    "pageBreakBefore": {
+     "required": true
+    },
+    "widowOrphan": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:charPr": {
+   "attrs": {
+    "borderFillIDRef": {
+     "required": true
+    },
+    "height": {
+     "required": true
+    },
+    "id": {
+     "required": true
+    },
+    "shadeColor": {
+     "required": true,
+     "enum": [
+      "none"
+     ]
+    },
+    "symMark": {
+     "required": true,
+     "enum": [
+      "NONE"
+     ]
+    },
+    "textColor": {
+     "required": true
+    },
+    "useFontSpace": {
+     "required": true
+    },
+    "useKerning": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:bold",
+    "hh:fontRef",
+    "hh:offset",
+    "hh:outline",
+    "hh:ratio",
+    "hh:relSz",
+    "hh:shadow",
+    "hh:spacing",
+    "hh:strikeout",
+    "hh:underline"
+   ],
+   "required_children": [
+    "hh:fontRef",
+    "hh:offset",
+    "hh:outline",
+    "hh:ratio",
+    "hh:relSz",
+    "hh:shadow",
+    "hh:spacing",
+    "hh:strikeout",
+    "hh:underline"
+   ],
+   "text": false,
+   "order": {
+    "hh:bold": [
+     "hh:outline",
+     "hh:shadow",
+     "hh:strikeout",
+     "hh:underline"
+    ],
+    "hh:fontRef": [
+     "hh:bold",
+     "hh:offset",
+     "hh:outline",
+     "hh:ratio",
+     "hh:relSz",
+     "hh:shadow",
+     "hh:spacing",
+     "hh:strikeout",
+     "hh:underline"
+    ],
+    "hh:offset": [
+     "hh:bold",
+     "hh:outline",
+     "hh:shadow",
+     "hh:strikeout",
+     "hh:underline"
+    ],
+    "hh:outline": [
+     "hh:shadow"
+    ],
+    "hh:ratio": [
+     "hh:bold",
+     "hh:offset",
+     "hh:outline",
+     "hh:relSz",
+     "hh:shadow",
+     "hh:spacing",
+     "hh:strikeout",
+     "hh:underline"
+    ],
+    "hh:relSz": [
+     "hh:bold",
+     "hh:offset",
+     "hh:outline",
+     "hh:shadow",
+     "hh:strikeout",
+     "hh:underline"
+    ],
+    "hh:spacing": [
+     "hh:bold",
+     "hh:offset",
+     "hh:outline",
+     "hh:relSz",
+     "hh:shadow",
+     "hh:strikeout",
+     "hh:underline"
+    ],
+    "hh:strikeout": [
+     "hh:outline",
+     "hh:shadow"
+    ],
+    "hh:underline": [
+     "hh:outline",
+     "hh:shadow",
+     "hh:strikeout"
+    ]
+   }
+  },
+  "hh:charProperties": {
+   "attrs": {
+    "itemCnt": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:charPr"
+   ],
+   "required_children": [
+    "hh:charPr"
+   ],
+   "text": false,
+   "count_attrs": {
+    "itemCnt": "hh:charPr"
+   }
+  },
+  "hh:compatibleDocument": {
+   "attrs": {
+    "targetProgram": {
+     "required": true,
+     "enum": [
+      "HWP201X"
+     ]
+    }
+   },
+   "children": [
+    "hh:layoutCompatibility"
+   ],
+   "required_children": [
+    "hh:layoutCompatibility"
+   ],
+   "text": false
+  },
+  "hh:diagonal": {
+   "attrs": {
+    "color": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "SOLID"
+     ]
+    },
+    "width": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:docOption": {
+   "attrs": {},
+   "children": [
+    "hh:linkinfo"
+   ],
+   "required_children": [
+    "hh:linkinfo"
+   ],
+   "text": false
+  },
+  "hh:font": {
+   "attrs": {
+    "face": {
+     "required": true
+    },
+    "id": {
+     "required": true
+    },
+    "isEmbedded": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "HFT",
+      "TTF"
+     ]
+    }
+   },
+   "children": [
+    "hh:substFont",
+    "hh:typeInfo"
+   ],
+   "required_children": [],
+   "text": false
+  },
+  "hh:fontRef": {
+   "attrs": {
+    "hangul": {
+     "required": true
+    },
+    "hanja": {
+     "required": true
+    },
+    "japanese": {
+     "required": true
+    },
+    "latin": {
+     "required": true
+    },
+    "other": {
+     "required": true
+    },
+    "symbol": {
+     "required": true
+    },
+    "user": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:fontface": {
+   "attrs": {
+    "fontCnt": {
+     "required": true
+    },
+    "lang": {
+     "required": true,
+     "enum": [
+      "HANGUL",
+      "HANJA",
+      "JAPANESE",
+      "LATIN",
+      "OTHER",
+      "SYMBOL",
+      "USER"
+     ]
+    }
+   },
+   "children": [
+    "hh:font"
+   ],
+   "required_children": [
+    "hh:font"
+   ],
+   "text": false,
+   "count_attrs": {
+    "fontCnt": "hh:font"
+   }
+  },
+  "hh:fontfaces": {
+   "attrs": {
+    "itemCnt": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:fontface"
+   ],
+   "required_children": [
+    "hh:fontface"
+   ],
+   "text": false,
+   "count_attrs": {
+    "itemCnt": "hh:fontface"
+   }
+  },
+  "hh:head": {
+   "attrs": {
+    "secCnt": {
+     "required": true
+    },
+    "version": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:beginNum",
+    "hh:compatibleDocument",
+    "hh:docOption",
+    "hh:refList",
+    "hh:trackchageConfig"
+   ],
+   "required_children": [
+    "hh:beginNum",
+    "hh:compatibleDocument",
+    "hh:docOption",
+    "hh:refList",
+    "hh:trackchageConfig"
+   ],
+   "text": false,
+   "order": {
+    "hh:beginNum": [
+     "hh:compatibleDocument",
+     "hh:docOption",
+     "hh:refList",
+     "hh:trackchageConfig"
+    ],
+    "hh:compatibleDocument": [
+     "hh:docOption",
+     "hh:trackchageConfig"
+    ],
+    "hh:docOption": [
+     "hh:trackchageConfig"
+    ],
+    "hh:refList": [
+     "hh:compatibleDocument",
+     "hh:docOption",
+     "hh:trackchageConfig"
+    ]
+   }
+  },
+  "hh:heading": {
+   "attrs": {
+    "idRef": {
+     "required": true
+    },
+    "level": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "NONE"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:layoutCompatibility": {
+   "attrs": {},
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:leftBorder": {
+   "attrs": {
+    "color": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "DOUBLE_SLIM",
+      "NONE",
+      "SOLID"
+     ]
+    },
+    "width": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:lineSpacing": {
+   "attrs": {
+    "type": {
+     "required": true,
+     "enum": [
+      "PERCENT"
+     ]
+    },
+    "unit": {
+     "required": true,
+     "enum": [
+      "HWPUNIT"
+     ]
+    },
+    "value": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:linkinfo": {
+   "attrs": {
+    "footnoteInherit": {
+     "required": true
+    },
+    "pageInherit": {
+     "required": true
+    },
+    "path": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:margin": {
+   "attrs": {},
+   "children": [
+    "hc:intent",
+    "hc:left",
+    "hc:next",
+    "hc:prev",
+    "hc:right"
+   ],
+   "required_children": [
+    "hc:intent",
+    "hc:left",
+    "hc:next",
+    "hc:prev",
+    "hc:right"
+   ],
+   "text": false,
+   "order": {
+    "hc:intent": [
+     "hc:left",
+     "hc:next",
+     "hc:prev",
+     "hc:right"
+    ],
+    "hc:left": [
+     "hc:next",
+     "hc:prev",
+     "hc:right"
+    ],
+    "hc:prev": [
+     "hc:next"
+    ],
+    "hc:right": [
+     "hc:next",
+     "hc:prev"
+    ]
+   }
+  },
+  "hh:numbering": {
+   "attrs": {
+    "id": {
+     "required": true
+    },
+    "start": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:paraHead"
+   ],
+   "required_children": [
+    "hh:paraHead"
+   ],
+   "text": false
+  },
+  "hh:numberings": {
+   "attrs": {
+    "itemCnt": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:numbering"
+   ],
+   "required_children": [
+    "hh:numbering"
+   ],
+   "text": false,
+   "count_attrs": {
+    "itemCnt": "hh:numbering"
+   }
+  },
+  "hh:offset": {
+   "attrs": {
+    "hangul": {
+     "required": true
+    },
+    "hanja": {
+     "required": true
+    },
+    "japanese": {
+     "required": true
+    },
+    "latin": {
+     "required": true
+    },
+    "other": {
+     "required": true
+    },
+    "symbol": {
+     "required": true
+    },
+    "user": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:outline": {
+   "attrs": {
+    "type": {
+     "required": true,
+     "enum": [
+      "NONE"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:paraHead": {
+   "attrs": {
+    "align": {
+     "required": true,
+     "enum": [
+      "LEFT"
+     ]
+    },
+    "autoIndent": {
+     "required": true
+    },
+    "charPrIDRef": {
+     "required": true
+    },
+    "checkable": {
+     "required": true
+    },
+    "level": {
+     "required": true
+    },
+    "numFormat": {
+     "required": true,
+     "enum": [
+      "CIRCLED_DIGIT",
+      "DIGIT",
+      "HANGUL_SYLLABLE"
+     ]
+    },
+    "start": {
+     "required": true
+    },
+    "textOffset": {
+     "required": true
+    },
+    "textOffsetType": {
+     "required": true,
+     "enum": [
+      "PERCENT"
+     ]
+    },
+    "useInstWidth": {
+     "required": true
+    },
+    "widthAdjust": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": true
+  },
+  "hh:paraPr": {
+   "attrs": {
+    "checked": {
+     "required": true
+    },
+    "condense": {
+     "required": true
+    },
+    "fontLineHeight": {
+     "required": true
+    },
+    "id": {
+     "required": true
+    },
+    "snapToGrid": {
+     "required": true
+    },
+    "suppressLineNumbers": {
+     "required": true
+    },
+    "tabPrIDRef": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:align",
+    "hh:autoSpacing",
+    "hh:border",
+    "hh:breakSetting",
+    "hh:heading",
+    "hp:switch"
+   ],
+   "required_children": [
+    "hh:align",
+    "hh:autoSpacing",
+    "hh:border",
+    "hh:breakSetting",
+    "hh:heading",
+    "hp:switch"
+   ],
+   "text": false,
+   "order": {
+    "hh:align": [
+     "hh:autoSpacing",
+     "hh:border",
+     "hh:breakSetting",
+     "hh:heading",
+     "hp:switch"
+    ],
+    "hh:autoSpacing": [
+     "hh:border",
+     "hp:switch"
+    ],
+    "hh:breakSetting": [
+     "hh:autoSpacing",
+     "hh:border",
+     "hp:switch"
+    ],
+    "hh:heading": [
+     "hh:autoSpacing",
+     "hh:border",
+     "hh:breakSetting",
+     "hp:switch"
+    ],
+    "hp:switch": [
+     "hh:border"
+    ]
+   }
+  },
+  "hh:paraProperties": {
+   "attrs": {
+    "itemCnt": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:paraPr"
+   ],
+   "required_children": [
+    "hh:paraPr"
+   ],
+   "text": false,
+   "count_attrs": {
+    "itemCnt": "hh:paraPr"
+   }
+  },
+  "hh:ratio": {
+   "attrs": {
+    "hangul": {
+     "required": true
+    },
+    "hanja": {
+     "required": true
+    },
+    "japanese": {
+     "required": true
+    },
+    "latin": {
+     "required": true
+    },
+    "other": {
+     "required": true
+    },
+    "symbol": {
+     "required": true
+    },
+    "user": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:refList": {
+   "attrs": {},
+   "children": [
+    "hh:borderFills",
+    "hh:charProperties",
+    "hh:fontfaces",
+    "hh:numberings",
+    "hh:paraProperties",
+    "hh:styles",
+    "hh:tabProperties"
+   ],
+   "required_children": [
+    "hh:borderFills",
+    "hh:charProperties",
+    "hh:fontfaces",
+    "hh:numberings",
+    "hh:paraProperties",
+    "hh:styles",
+    "hh:tabProperties"
+   ],
+   "text": false,
+   "order": {
+    "hh:borderFills": [
+     "hh:charProperties",
+     "hh:numberings",
+     "hh:paraProperties",
+     "hh:styles",
+     "hh:tabProperties"
+    ],
+    "hh:charProperties": [
+     "hh:numberings",
+     "hh:paraProperties",
+     "hh:styles",
+     "hh:tabProperties"
+    ],
+    "hh:fontfaces": [
+     "hh:borderFills",
+     "hh:charProperties",
+     "hh:numberings",
+     "hh:paraProperties",
+     "hh:styles",
+     "hh:tabProperties"
+    ],
+    "hh:numberings": [
+     "hh:paraProperties",
+     "hh:styles"
+    ],
+    "hh:paraProperties": [
+     "hh:styles"
+    ],
+    "hh:tabProperties": [
+     "hh:numberings",
+     "hh:paraProperties",
+     "hh:styles"
+    ]
+   }
+  },
+  "hh:relSz": {
+   "attrs": {
+    "hangul": {
+     "required": true
+    },
+    "hanja": {
+     "required": true
+    },
+    "japanese": {
+     "required": true
+    },
+    "latin": {
+     "required": true
+    },
+    "other": {
+     "required": true
+    },
+    "symbol": {
+     "required": true
+    },
+    "user": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:rightBorder": {
+   "attrs": {
+    "color": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "DOUBLE_SLIM",
+      "NONE",
+      "SOLID"
+     ]
+    },
+    "width": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:shadow": {
+   "attrs": {
+    "color": {
+     "required": true
+    },
+    "offsetX": {
+     "required": true
+    },
+    "offsetY": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "NONE"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:slash": {
+   "attrs": {
+    "Crooked": {
+     "required": true
+    },
+    "isCounter": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "NONE"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:spacing": {
+   "attrs": {
+    "hangul": {
+     "required": true
+    },
+    "hanja": {
+     "required": true
+    },
+    "japanese": {
+     "required": true
+    },
+    "latin": {
+     "required": true
+    },
+    "other": {
+     "required": true
+    },
+    "symbol": {
+     "required": true
+    },
+    "user": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:strikeout": {
+   "attrs": {
+    "color": {
+     "required": true
+    },
+    "shape": {
+     "required": true,
+     "enum": [
+      "NONE"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:style": {
+   "attrs": {
+    "charPrIDRef": {
+     "required": true
+    },
+    "engName": {
+     "required": true
+    },
+    "id": {
+     "required": true
+    },
+    "langID": {
+     "required": true
+    },
+    "lockForm": {
+     "required": true
+    },
+    "name": {
+     "required": true
+    },
+    "nextStyleIDRef": {
+     "required": true
+    },
+    "paraPrIDRef": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "CHAR",
+      "PARA"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:styles": {
+   "attrs": {
+    "itemCnt": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:style"
+   ],
+   "required_children": [
+    "hh:style"
+   ],
+   "text": false,
+   "count_attrs": {
+    "itemCnt": "hh:style"
+   }
+  },
+  "hh:substFont": {
+   "attrs": {
+    "binaryItemIDRef": {
+     "required": true
+    },
+    "face": {
+     "required": true
+    },
+    "isEmbedded": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "TTF"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:tabItem": {
+   "attrs": {
+    "leader": {
+     "required": true,
+     "enum": [
+      "NONE"
+     ]
+    },
+    "pos": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "LEFT"
+     ]
+    },
+    "unit": {
+     "required": false,
+     "enum": [
+      "HWPUNIT"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:tabPr": {
+   "attrs": {
+    "autoTabLeft": {
+     "required": true
+    },
+    "autoTabRight": {
+     "required": true
+    },
+    "id": {
+     "required": true
+    }
+   },
+   "children": [
+    "hp:switch"
+   ],
+   "required_children": [],
+   "text": false
+  },
+  "hh:tabProperties": {
+   "attrs": {
+    "itemCnt": {
+     "required": true
+    }
+   },
+   "children": [
+    "hh:tabPr"
+   ],
+   "required_children": [
+    "hh:tabPr"
+   ],
+   "text": false,
+   "count_attrs": {
+    "itemCnt": "hh:tabPr"
+   }
+  },
+  "hh:topBorder": {
+   "attrs": {
+    "color": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "DOUBLE_SLIM",
+      "NONE",
+      "SOLID"
+     ]
+    },
+    "width": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:trackchageConfig": {
+   "attrs": {
+    "flags": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:typeInfo": {
+   "attrs": {
+    "armStyle": {
+     "required": true
+    },
+    "contrast": {
+     "required": true
+    },
+    "familyType": {
+     "required": true,
+     "enum": [
+      "FCAT_GOTHIC",
+      "FCAT_MYUNGJO"
+     ]
+    },
+    "letterform": {
+     "required": true
+    },
+    "midline": {
+     "required": true
+    },
+    "proportion": {
+     "required": true
+    },
+    "strokeVariation": {
+     "required": true
+    },
+    "weight": {
+     "required": true
+    },
+    "xHeight": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hh:underline": {
+   "attrs": {
+    "color": {
+     "required": true
+    },
+    "shape": {
+     "required": true,
+     "enum": [
+      "SOLID"
+     ]
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "BOTTOM",
+      "NONE"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:autoNumFormat": {
+   "attrs": {
+    "prefixChar": {
+     "required": true
+    },
+    "suffixChar": {
+     "required": true
+    },
+    "supscript": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "DIGIT"
+     ]
+    },
+    "userChar": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:case": {
+   "attrs": {
+    "hp:required-namespace": {
+     "required": true,
+     "enum": [
+      "http://www.hancom.co.kr/hwpml/2016/HwpUnitChar"
+     ]
+    }
+   },
+   "children": [
+    "hh:lineSpacing",
+    "hh:margin",
+    "hh:tabItem"
+   ],
+   "required_children": [],
+   "text": false,
+   "order": {
+    "hh:margin": [
+     "hh:lineSpacing"
+    ]
+   }
+  },
+  "hp:cellAddr": {
+   "attrs": {
+    "colAddr": {
+     "required": true
+    },
+    "rowAddr": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:cellMargin": {
+   "attrs": {
+    "bottom": {
+     "required": true
+    },
+    "left": {
+     "required": true
+    },
+    "right": {
+     "required": true
+    },
+    "top": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:cellSpan": {
+   "attrs": {
+    "colSpan": {
+     "required": true
+    },
+    "rowSpan": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:cellSz": {
+   "attrs": {
+    "height": {
+     "required": true
+    },
+    "width": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:cellzone": {
+   "attrs": {
+    "borderFillIDRef": {
+     "required": true
+    },
+    "endColAddr": {
+     "required": true
+    },
+    "endRowAddr": {
+     "required": true
+    },
+    "startColAddr": {
+     "required": true
+    },
+    "startRowAddr": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:cellzoneList": {
+   "attrs": {},
+   "children": [
+    "hp:cellzone"
+   ],
+   "required_children": [
+    "hp:cellzone"
+   ],
+   "text": false
+  },
+  "hp:colPr": {
+   "attrs": {
+    "colCount": {
+     "required": true
+    },
+    "id": {
+     "required": true
+    },
+    "layout": {
+     "required": true,
+     "enum": [
+      "LEFT"
+     ]
+    },
+    "sameGap": {
+     "required": true
+    },
+    "sameSz": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "NEWSPAPER"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:ctrl": {
+   "attrs": {},
+   "children": [
+    "hp:colPr",
+    "hp:pageNum"
+   ],
+   "required_children": [],
+   "text": false
+  },
+  "hp:default": {
+   "attrs": {},
+   "children": [
+    "hh:lineSpacing",
+    "hh:margin",
+    "hh:tabItem"
+   ],
+   "required_children": [],
+   "text": false,
+   "order": {
+    "hh:margin": [
+     "hh:lineSpacing"
+    ]
+   }
+  },
+  "hp:endNotePr": {
+   "attrs": {},
+   "children": [
+    "hp:autoNumFormat",
+    "hp:noteLine",
+    "hp:noteSpacing",
+    "hp:numbering",
+    "hp:placement"
+   ],
+   "required_children": [
+    "hp:autoNumFormat",
+    "hp:noteLine",
+    "hp:noteSpacing",
+    "hp:numbering",
+    "hp:placement"
+   ],
+   "text": false,
+   "order": {
+    "hp:autoNumFormat": [
+     "hp:noteLine",
+     "hp:noteSpacing",
+     "hp:numbering",
+     "hp:placement"
+    ],
+    "hp:noteLine": [
+     "hp:noteSpacing",
+     "hp:numbering",
+     "hp:placement"
+    ],
+    "hp:noteSpacing": [
+     "hp:numbering",
+     "hp:placement"
+    ],
+    "hp:numbering": [
+     "hp:placement"
+    ]
+   }
+  },
+  "hp:footNotePr": {
+   "attrs": {},
+   "children": [
+    "hp:autoNumFormat",
+    "hp:noteLine",
+    "hp:noteSpacing",
+    "hp:numbering",
+    "hp:placement"
+   ],
+   "required_children": [
+    "hp:autoNumFormat",
+    "hp:noteLine",
+    "hp:noteSpacing",
+    "hp:numbering",
+    "hp:placement"
+   ],
+   "text": false,
+   "order": {
+    "hp:autoNumFormat": [
+     "hp:noteLine",
+     "hp:noteSpacing",
+     "hp:numbering",
+     "hp:placement"
+    ],
+    "hp:noteLine": [
+     "hp:noteSpacing",
+     "hp:numbering",
+     "hp:placement"
+    ],
+    "hp:noteSpacing": [
+     "hp:numbering",
+     "hp:placement"
+    ],
+    "hp:numbering": [
+     "hp:placement"
+    ]
+   }
+  },
+  "hp:grid": {
+   "attrs": {
+    "charGrid": {
+     "required": true
+    },
+    "lineGrid": {
+     "required": true
+    },
+    "wonggojiFormat": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:inMargin": {
+   "attrs": {
+    "bottom": {
+     "required": true
+    },
+    "left": {
+     "required": true
+    },
+    "right": {
+     "required": true
+    },
+    "top": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:lineBreak": {
+   "attrs": {},
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:lineNumberShape": {
+   "attrs": {
+    "countBy": {
+     "required": true
+    },
+    "distance": {
+     "required": true
+    },
+    "restartType": {
+     "required": true
+    },
+    "startNumber": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:lineseg": {
+   "attrs": {
+    "baseline": {
+     "required": true
+    },
+    "flags": {
+     "required": true
+    },
+    "horzpos": {
+     "required": true
+    },
+    "horzsize": {
+     "required": true
+    },
+    "spacing": {
+     "required": true
+    },
+    "textheight": {
+     "required": true
+    },
+    "textpos": {
+     "required": true
+    },
+    "vertpos": {
+     "required": true
+    },
+    "vertsize": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:linesegarray": {
+   "attrs": {},
+   "children": [
+    "hp:lineseg"
+   ],
+   "required_children": [
+    "hp:lineseg"
+   ],
+   "text": false
+  },
+  "hp:margin": {
+   "attrs": {
+    "bottom": {
+     "required": true
+    },
+    "footer": {
+     "required": true
+    },
+    "gutter": {
+     "required": true
+    },
+    "header": {
+     "required": true
+    },
+    "left": {
+     "required": true
+    },
+    "right": {
+     "required": true
+    },
+    "top": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:masterPage": {
+   "attrs": {
+    "idRef": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:noteLine": {
+   "attrs": {
+    "color": {
+     "required": true
+    },
+    "length": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "SOLID"
+     ]
+    },
+    "width": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:noteSpacing": {
+   "attrs": {
+    "aboveLine": {
+     "required": true
+    },
+    "belowLine": {
+     "required": true
+    },
+    "betweenNotes": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:numbering": {
+   "attrs": {
+    "newNum": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "CONTINUOUS"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:offset": {
+   "attrs": {
+    "bottom": {
+     "required": true
+    },
+    "left": {
+     "required": true
+    },
+    "right": {
+     "required": true
+    },
+    "top": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:outMargin": {
+   "attrs": {
+    "bottom": {
+     "required": true
+    },
+    "left": {
+     "required": true
+    },
+    "right": {
+     "required": true
+    },
+    "top": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:p": {
+   "attrs": {
+    "columnBreak": {
+     "required": true
+    },
+    "id": {
+     "required": true
+    },
+    "merged": {
+     "required": true
+    },
+    "pageBreak": {
+     "required": true
+    },
+    "paraPrIDRef": {
+     "required": true
+    },
+    "styleIDRef": {
+     "required": true
+    }
+   },
+   "children": [
+    "hp:linesegarray",
+    "hp:run"
+   ],
+   "required_children": [
+    "hp:linesegarray",
+    "hp:run"
+   ],
+   "text": false,
+   "order": {
+    "hp:run": [
+     "hp:linesegarray"
+    ]
+   }
+  },
+  "hp:pageBorderFill": {
+   "attrs": {
+    "borderFillIDRef": {
+     "required": true
+    },
+    "fillArea": {
+     "required": true,
+     "enum": [
+      "PAPER"
+     ]
+    },
+    "footerInside": {
+     "required": true
+    },
+    "headerInside": {
+     "required": true
+    },
+    "textBorder": {
+     "required": true,
+     "enum": [
+      "PAPER"
+     ]
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "BOTH",
+      "EVEN",
+      "ODD"
+     ]
+    }
+   },
+   "children": [
+    "hp:offset"
+   ],
+   "required_children": [
+    "hp:offset"
+   ],
+   "text": false
+  },
+  "hp:pageNum": {
+   "attrs": {
+    "formatType": {
+     "required": true,
+     "enum": [
+      "DIGIT"
+     ]
+    },
+    "pos": {
+     "required": true,
+     "enum": [
+      "BOTTOM_CENTER"
+     ]
+    },
+    "sideChar": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:pagePr": {
+   "attrs": {
+    "gutterType": {
+     "required": true,
+     "enum": [
+      "LEFT_ONLY"
+     ]
+    },
+    "height": {
+     "required": true
+    },
+    "landscape": {
+     "required": true,
+     "enum": [
+      "WIDELY"
+     ],
+     "enum_open": true
+    },
+    "width": {
+     "required": true
+    }
+   },
+   "children": [
+    "hp:margin"
+   ],
+   "required_children": [
+    "hp:margin"
+   ],
+   "text": false
+  },
+  "hp:placement": {
+   "attrs": {
+    "beneathText": {
+     "required": true
+    },
+    "place": {
+     "required": true,
+     "enum": [
+      "EACH_COLUMN",
+      "END_OF_DOCUMENT"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:pos": {
+   "attrs": {
+    "affectLSpacing": {
+     "required": true
+    },
+    "allowOverlap": {
+     "required": true
+    },
+    "flowWithText": {
+     "required": true
+    },
+    "holdAnchorAndSO": {
+     "required": true
+    },
+    "horzAlign": {
+     "required": true,
+     "enum": [
+      "LEFT"
+     ]
+    },
+    "horzOffset": {
+     "required": true
+    },
+    "horzRelTo": {
+     "required": true,
+     "enum": [
+      "COLUMN",
+      "PARA"
+     ]
+    },
+    "treatAsChar": {
+     "required": true
+    },
+    "vertAlign": {
+     "required": true,
+     "enum": [
+      "TOP"
+     ]
+    },
+    "vertOffset": {
+     "required": true
+    },
+    "vertRelTo": {
+     "required": true,
+     "enum": [
+      "PARA"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:run": {
+   "attrs": {
+    "charPrIDRef": {
+     "required": true
+    }
+   },
+   "children": [
+    "hp:ctrl",
+    "hp:secPr",
+    "hp:t",
+    "hp:tbl"
+   ],
+   "required_children": [],
+   "text": false,
+   "order": {
+    "hp:ctrl": [
+     "hp:t",
+     "hp:tbl"
+    ],
+    "hp:secPr": [
+     "hp:t",
+     "hp:tbl"
+    ],
+    "hp:tbl": [
+     "hp:t"
+    ]
+   }
+  },
+  "hp:secPr": {
+   "attrs": {
+    "id": {
+     "required": true
+    },
+    "masterPageCnt": {
+     "required": true
+    },
+    "memoShapeIDRef": {
+     "required": true
+    },
+    "outlineShapeIDRef": {
+     "required": true
+    },
+    "spaceColumns": {
+     "required": true
+    },
+    "tabStop": {
+     "required": true
+    },
+    "tabStopUnit": {
+     "required": true,
+     "enum": [
+      "HWPUNIT"
+     ]
+    },
+    "tabStopVal": {
+     "required": true
+    },
+    "textDirection": {
+     "required": true,
+     "enum": [
+      "HORIZONTAL"
+     ]
+    },
+    "textVerticalWidthHead": {
+     "required": true
+    }
+   },
+   "children": [
+    "hp:endNotePr",
+    "hp:footNotePr",
+    "hp:grid",
+    "hp:lineNumberShape",
+    "hp:masterPage",
+    "hp:pageBorderFill",
+    "hp:pagePr",
+    "hp:startNum",
+    "hp:visibility"
+   ],
+   "required_children": [
+    "hp:endNotePr",
+    "hp:footNotePr",
+    "hp:grid",
+    "hp:lineNumberShape",
+    "hp:pageBorderFill",
+    "hp:pagePr",
+    "hp:startNum",
+    "hp:visibility"
+   ],
+   "text": false,
+   "order": {
+    "hp:endNotePr": [
+     "hp:masterPage",
+     "hp:pageBorderFill"
+    ],
+    "hp:footNotePr": [
+     "hp:endNotePr",
+     "hp:masterPage",
+     "hp:pageBorderFill"
+    ],
+    "hp:grid": [
+     "hp:endNotePr",
+     "hp:footNotePr",
+     "hp:lineNumberShape",
+     "hp:masterPage",
+     "hp:pageBorderFill",
+     "hp:pagePr",
+     "hp:startNum",
+     "hp:visibility"
+    ],
+    "hp:lineNumberShape": [
+     "hp:endNotePr",
+     "hp:footNotePr",
+     "hp:masterPage",
+     "hp:pageBorderFill",
+     "hp:pagePr"
+    ],
+    "hp:pageBorderFill": [
+     "hp:masterPage"
+    ],
+    "hp:pagePr": [
+     "hp:endNotePr",
+     "hp:footNotePr",
+     "hp:masterPage",
+     "hp:pageBorderFill"
+    ],
+    "hp:startNum": [
+     "hp:endNotePr",
+     "hp:footNotePr",
+     "hp:lineNumberShape",
+     "hp:masterPage",
+     "hp:pageBorderFill",
+     "hp:pagePr",
+     "hp:visibility"
+    ],
+    "hp:visibility": [
+     "hp:endNotePr",
+     "hp:footNotePr",
+     "hp:lineNumberShape",
+     "hp:masterPage",
+     "hp:pageBorderFill",
+     "hp:pagePr"
+    ]
+   },
+   "count_attrs": {
+    "masterPageCnt": "hp:masterPage"
+   }
+  },
+  "hp:startNum": {
+   "attrs": {
+    "equation": {
+     "required": true
+    },
+    "page": {
+     "required": true
+    },
+    "pageStartsOn": {
+     "required": true,
+     "enum": [
+      "BOTH"
+     ]
+    },
+    "pic": {
+     "required": true
+    },
+    "tbl": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:subList": {
+   "attrs": {
+    "hasNumRef": {
+     "required": true
+    },
+    "hasTextRef": {
+     "required": true
+    },
+    "id": {
+     "required": true
+    },
+    "lineWrap": {
+     "required": true,
+     "enum": [
+      "BREAK"
+     ]
+    },
+    "linkListIDRef": {
+     "required": true
+    },
+    "linkListNextIDRef": {
+     "required": true
+    },
+    "textDirection": {
+     "required": true,
+     "enum": [
+      "HORIZONTAL"
+     ]
+    },
+    "textHeight": {
+     "required": true
+    },
+    "textWidth": {
+     "required": true
+    },
+    "vertAlign": {
+     "required": true,
+     "enum": [
+      "BOTTOM",
+      "CENTER",
+      "TOP"
+     ]
+    }
+   },
+   "children": [
+    "hp:p"
+   ],
+   "required_children": [
+    "hp:p"
+   ],
+   "text": false
+  },
+  "hp:switch": {
+   "attrs": {},
+   "children": [
+    "hp:case",
+    "hp:default"
+   ],
+   "required_children": [
+    "hp:case",
+    "hp:default"
+   ],
+   "text": false,
+   "order": {
+    "hp:case": [
+     "hp:default"
+    ]
+   }
+  },
+  "hp:sz": {
+   "attrs": {
+    "height": {
+     "required": true
+    },
+    "heightRelTo": {
+     "required": true,
+     "enum": [
+      "ABSOLUTE"
+     ]
+    },
+    "protect": {
+     "required": true
+    },
+    "width": {
+     "required": true
+    },
+    "widthRelTo": {
+     "required": true,
+     "enum": [
+      "ABSOLUTE"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hp:t": {
+   "attrs": {
+    "charStyleIDRef": {
+     "required": false
+    }
+   },
+   "children": [
+    "hp:lineBreak"
+   ],
+   "required_children": [],
+   "text": true
+  },
+  "hp:tbl": {
+   "attrs": {
+    "borderFillIDRef": {
+     "required": true
+    },
+    "cellSpacing": {
+     "required": true
+    },
+    "colCnt": {
+     "required": true
+    },
+    "dropcapstyle": {
+     "required": true,
+     "enum": [
+      "None"
+     ]
+    },
+    "id": {
+     "required": true
+    },
+    "lock": {
+     "required": true
+    },
+    "noAdjust": {
+     "required": true
+    },
+    "numberingType": {
+     "required": true,
+     "enum": [
+      "TABLE"
+     ]
+    },
+    "pageBreak": {
+     "required": true,
+     "enum": [
+      "CELL",
+      "NONE"
+     ]
+    },
+    "repeatHeader": {
+     "required": true
+    },
+    "rowCnt": {
+     "required": true
+    },
+    "textFlow": {
+     "required": true,
+     "enum": [
+      "BOTH_SIDES"
+     ]
+    },
+    "textWrap": {
+     "required": true,
+     "enum": [
+      "TOP_AND_BOTTOM"
+     ]
+    },
+    "zOrder": {
+     "required": true
+    }
+   },
+   "children": [
+    "hp:cellzoneList",
+    "hp:inMargin",
+    "hp:outMargin",
+    "hp:pos",
+    "hp:sz",
+    "hp:tr"
+   ],
+   "required_children": [
+    "hp:inMargin",
+    "hp:outMargin",
+    "hp:pos",
+    "hp:sz",
+    "hp:tr"
+   ],
+   "text": false,
+   "order": {
+    "hp:cellzoneList": [
+     "hp:tr"
+    ],
+    "hp:inMargin": [
+     "hp:cellzoneList",
+     "hp:tr"
+    ],
+    "hp:outMargin": [
+     "hp:cellzoneList",
+     "hp:inMargin",
+     "hp:tr"
+    ],
+    "hp:pos": [
+     "hp:cellzoneList",
+     "hp:inMargin",
+     "hp:outMargin",
+     "hp:tr"
+    ],
+    "hp:sz": [
+     "hp:cellzoneList",
+     "hp:inMargin",
+     "hp:outMargin",
+     "hp:pos",
+     "hp:tr"
+    ]
+   },
+   "count_attrs": {
+    "rowCnt": "hp:tr"
+   }
+  },
+  "hp:tc": {
+   "attrs": {
+    "borderFillIDRef": {
+     "required": true
+    },
+    "dirty": {
+     "required": true
+    },
+    "editable": {
+     "required": true
+    },
+    "hasMargin": {
+     "required": true
+    },
+    "header": {
+     "required": true
+    },
+    "name": {
+     "required": true
+    },
+    "protect": {
+     "required": true
+    }
+   },
+   "children": [
+    "hp:cellAddr",
+    "hp:cellMargin",
+    "hp:cellSpan",
+    "hp:cellSz",
+    "hp:subList"
+   ],
+   "required_children": [
+    "hp:cellAddr",
+    "hp:cellMargin",
+    "hp:cellSpan",
+    "hp:cellSz",
+    "hp:subList"
+   ],
+   "text": false,
+   "order": {
+    "hp:cellAddr": [
+     "hp:cellMargin",
+     "hp:cellSpan",
+     "hp:cellSz"
+    ],
+    "hp:cellSpan": [
+     "hp:cellMargin",
+     "hp:cellSz"
+    ],
+    "hp:cellSz": [
+     "hp:cellMargin"
+    ],
+    "hp:subList": [
+     "hp:cellAddr",
+     "hp:cellMargin",
+     "hp:cellSpan",
+     "hp:cellSz"
+    ]
+   }
+  },
+  "hp:tr": {
+   "attrs": {},
+   "children": [
+    "hp:tc"
+   ],
+   "required_children": [
+    "hp:tc"
+   ],
+   "text": false
+  },
+  "hp:visibility": {
+   "attrs": {
+    "border": {
+     "required": true,
+     "enum": [
+      "SHOW_ALL"
+     ]
+    },
+    "fill": {
+     "required": true,
+     "enum": [
+      "SHOW_ALL"
+     ]
+    },
+    "hideFirstEmptyLine": {
+     "required": true
+    },
+    "hideFirstFooter": {
+     "required": true
+    },
+    "hideFirstHeader": {
+     "required": true
+    },
+    "hideFirstMasterPage": {
+     "required": true
+    },
+    "hideFirstPageNum": {
+     "required": true
+    },
+    "showLineNumber": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "hs:sec": {
+   "attrs": {},
+   "children": [
+    "hp:p"
+   ],
+   "required_children": [
+    "hp:p"
+   ],
+   "text": false
+  },
+  "hv:HCFVersion": {
+   "attrs": {
+    "appVersion": {
+     "required": true
+    },
+    "application": {
+     "required": true
+    },
+    "buildNumber": {
+     "required": true
+    },
+    "major": {
+     "required": true
+    },
+    "micro": {
+     "required": true
+    },
+    "minor": {
+     "required": true
+    },
+    "os": {
+     "required": true
+    },
+    "tagetApplication": {
+     "required": true,
+     "enum": [
+      "WORDPROCESSOR"
+     ]
+    },
+    "xmlVersion": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "masterPage": {
+   "attrs": {
+    "id": {
+     "required": true
+    },
+    "pageDuplicate": {
+     "required": true
+    },
+    "pageFront": {
+     "required": true
+    },
+    "pageNumber": {
+     "required": true
+    },
+    "type": {
+     "required": true,
+     "enum": [
+      "BOTH"
+     ]
+    }
+   },
+   "children": [
+    "hp:subList"
+   ],
+   "required_children": [
+    "hp:subList"
+   ],
+   "text": false
+  },
+  "ocf:container": {
+   "attrs": {},
+   "children": [
+    "ocf:rootfiles"
+   ],
+   "required_children": [
+    "ocf:rootfiles"
+   ],
+   "text": false
+  },
+  "ocf:rootfile": {
+   "attrs": {
+    "full-path": {
+     "required": true
+    },
+    "media-type": {
+     "required": true,
+     "enum": [
+      "application/hwpml-package+xml",
+      "text/plain"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "ocf:rootfiles": {
+   "attrs": {},
+   "children": [
+    "ocf:rootfile"
+   ],
+   "required_children": [
+    "ocf:rootfile"
+   ],
+   "text": false
+  },
+  "odf:manifest": {
+   "attrs": {},
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "opf:item": {
+   "attrs": {
+    "href": {
+     "required": true
+    },
+    "id": {
+     "required": true
+    },
+    "media-type": {
+     "required": true,
+     "enum": [
+      "application/xml"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "opf:itemref": {
+   "attrs": {
+    "idref": {
+     "required": true
+    },
+    "linear": {
+     "required": true,
+     "enum": [
+      "no",
+      "yes"
+     ]
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": false
+  },
+  "opf:language": {
+   "attrs": {},
+   "children": [],
+   "required_children": [],
+   "text": true
+  },
+  "opf:manifest": {
+   "attrs": {},
+   "children": [
+    "opf:item"
+   ],
+   "required_children": [
+    "opf:item"
+   ],
+   "text": false
+  },
+  "opf:meta": {
+   "attrs": {
+    "content": {
+     "required": true
+    },
+    "name": {
+     "required": true
+    }
+   },
+   "children": [],
+   "required_children": [],
+   "text": true
+  },
+  "opf:metadata": {
+   "attrs": {},
+   "children": [
+    "opf:language",
+    "opf:meta",
+    "opf:title"
+   ],
+   "required_children": [
+    "opf:language",
+    "opf:meta",
+    "opf:title"
+   ],
+   "text": false,
+   "order": {
+    "opf:language": [
+     "opf:meta"
+    ],
+    "opf:title": [
+     "opf:language",
+     "opf:meta"
+    ]
+   }
+  },
+  "opf:package": {
+   "attrs": {
+    "id": {
+     "required": true
+    },
+    "unique-identifier": {
+     "required": true
+    },
+    "version": {
+     "required": true
+    }
+   },
+   "children": [
+    "opf:manifest",
+    "opf:metadata",
+    "opf:spine"
+   ],
+   "required_children": [
+    "opf:manifest",
+    "opf:metadata",
+    "opf:spine"
+   ],
+   "text": false,
+   "order": {
+    "opf:manifest": [
+     "opf:spine"
+    ],
+    "opf:metadata": [
+     "opf:manifest",
+     "opf:spine"
+    ]
+   }
+  },
+  "opf:spine": {
+   "attrs": {},
+   "children": [
+    "opf:itemref"
+   ],
+   "required_children": [
+    "opf:itemref"
+   ],
+   "text": false
+  },
+  "opf:title": {
+   "attrs": {},
+   "children": [],
+   "required_children": [],
+   "text": true
+  }
+ },
+ "part_count_attrs": [
+  {
+   "element": "hh:head",
+   "attr": "secCnt",
+   "counts": "section_parts"
+  }
+ ],
+ "id_defs": [
+  {
+   "kind": "borderFill",
+   "element": "hh:borderFill",
+   "attr": "id"
+  },
+  {
+   "kind": "charPr",
+   "element": "hh:charPr",
+   "attr": "id"
+  },
+  {
+   "kind": "paraPr",
+   "element": "hh:paraPr",
+   "attr": "id"
+  },
+  {
+   "kind": "tabPr",
+   "element": "hh:tabPr",
+   "attr": "id"
+  },
+  {
+   "kind": "numbering",
+   "element": "hh:numbering",
+   "attr": "id"
+  },
+  {
+   "kind": "style",
+   "element": "hh:style",
+   "attr": "id"
+  },
+  {
+   "kind": "font",
+   "element": "hh:font",
+   "attr": "id",
+   "group_parent": "hh:fontface",
+   "group_attr": "lang"
+  }
+ ],
+ "id_refs": [
+  {
+   "element": "hp:p",
+   "attr": "paraPrIDRef",
+   "kind": "paraPr"
+  },
+  {
+   "element": "hp:p",
+   "attr": "styleIDRef",
+   "kind": "style"
+  },
+  {
+   "element": "hp:run",
+   "attr": "charPrIDRef",
+   "kind": "charPr"
+  },
+  {
+   "element": "hp:t",
+   "attr": "charStyleIDRef",
+   "kind": "style"
+  },
+  {
+   "element": "hh:style",
+   "attr": "paraPrIDRef",
+   "kind": "paraPr"
+  },
+  {
+   "element": "hh:style",
+   "attr": "charPrIDRef",
+   "kind": "charPr"
+  },
+  {
+   "element": "hh:style",
+   "attr": "nextStyleIDRef",
+   "kind": "style"
+  },
+  {
+   "element": "hh:charPr",
+   "attr": "borderFillIDRef",
+   "kind": "borderFill"
+  },
+  {
+   "element": "hh:paraPr",
+   "attr": "tabPrIDRef",
+   "kind": "tabPr"
+  },
+  {
+   "element": "hh:heading",
+   "attr": "idRef",
+   "kind": "numbering",
+   "none": "zero"
+  },
+  {
+   "element": "hh:border",
+   "attr": "borderFillIDRef",
+   "kind": "borderFill"
+  },
+  {
+   "element": "hh:paraHead",
+   "attr": "charPrIDRef",
+   "kind": "charPr",
+   "none": "uint32_max"
+  },
+  {
+   "element": "hp:tbl",
+   "attr": "borderFillIDRef",
+   "kind": "borderFill"
+  },
+  {
+   "element": "hp:tc",
+   "attr": "borderFillIDRef",
+   "kind": "borderFill"
+  },
+  {
+   "element": "hp:secPr",
+   "attr": "outlineShapeIDRef",
+   "kind": "numbering"
+  },
+  {
+   "element": "hp:pageBorderFill",
+   "attr": "borderFillIDRef",
+   "kind": "borderFill"
+  },
+  {
+   "element": "hh:fontRef",
+   "attr": "hangul",
+   "kind": "font",
+   "group": "HANGUL"
+  },
+  {
+   "element": "hh:fontRef",
+   "attr": "latin",
+   "kind": "font",
+   "group": "LATIN"
+  },
+  {
+   "element": "hh:fontRef",
+   "attr": "hanja",
+   "kind": "font",
+   "group": "HANJA"
+  },
+  {
+   "element": "hh:fontRef",
+   "attr": "japanese",
+   "kind": "font",
+   "group": "JAPANESE"
+  },
+  {
+   "element": "hh:fontRef",
+   "attr": "other",
+   "kind": "font",
+   "group": "OTHER"
+  },
+  {
+   "element": "hh:fontRef",
+   "attr": "symbol",
+   "kind": "font",
+   "group": "SYMBOL"
+  },
+  {
+   "element": "hh:fontRef",
+   "attr": "user",
+   "kind": "font",
+   "group": "USER"
+  }
+ ],
+ "unique_ids": [
+  {
+   "element": "hp:tbl",
+   "attr": "id"
+  }
+ ],
+ "sequences": [
+  {
+   "parent": "hh:fontfaces",
+   "child": "hh:fontface",
+   "attr": "lang",
+   "values": [
+    "HANGUL",
+    "LATIN",
+    "HANJA",
+    "JAPANESE",
+    "OTHER",
+    "SYMBOL",
+    "USER"
+   ]
+  },
+  {
+   "parent": "hp:secPr",
+   "child": "hp:pageBorderFill",
+   "attr": "type",
+   "values": [
+    "BOTH",
+    "EVEN",
+    "ODD"
+   ]
+  }
+ ],
+ "switch": {
+  "default_scale": "double",
+  "scaled": [
+   [
+    "hc:intent",
+    "value"
+   ],
+   [
+    "hc:left",
+    "value"
+   ],
+   [
+    "hc:next",
+    "value"
+   ],
+   [
+    "hc:prev",
+    "value"
+   ],
+   [
+    "hc:right",
+    "value"
+   ],
+   [
+    "hh:tabItem",
+    "pos"
+   ]
+  ],
+  "equal": [
+   {
+    "element": "hh:lineSpacing",
+    "attr": "value",
+    "when": {
+     "type": "PERCENT"
+    }
+   }
+  ]
+ }
+}

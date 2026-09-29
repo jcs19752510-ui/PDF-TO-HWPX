@@ -1,6 +1,6 @@
-# 테스트 결과서 (Test Result Report) — unit-20 (v1 PASS 원문 + 11절 v2 재검증 CONDITIONAL PASS)
+# 테스트 결과서 (Test Result Report) — unit-20 (v1 PASS 원문 + 11절 v2 + 12절 v3 재검증 CONDITIONAL PASS)
 
-> **현재 유효 판정은 11절(재검증 2회차, 2026-09-29, unit-20 v2 = DEC-049 재작업 + unit-23 예약 슬롯 락 반영): CONDITIONAL PASS** (AC-1~AC-17 17/17 PASS, Low 결함 DEF-020b-01 Open). 1~10절은 v1(PASS, AC-1~16) 원문 보존본이며, 11절이 자기완결적으로 전체(AC-1~17)를 재검증한다. v1의 서술 중 views.py의 `ImportError → 503` 방어 코드와 관련된 내용은 v2에서 폐기된 동작이다.
+> **현재 유효 판정은 12절(재검증 3회차, 2026-09-29, unit-20 v3 = DEC-052/053 3차 재작업): CONDITIONAL PASS** (AC-1~AC-18 18/18 PASS, DEF-020b-01 Closed, 신규 Low 결함 DEF-020c-01 Open). 1~10절은 v1 원문, 11절은 v2 재검증 원문 보존본이며, 12절이 자기완결적으로 전체를 재검증한다. v1·v2의 서술 중 '19건에서 503', '503 시 행·업로드 보존', 'HEAD가 결과 삭제'는 v3에서 폐기·수정된 동작이다.
 
 
 ## 1. 개요
@@ -354,3 +354,227 @@ flowchart TD
 | `decisions.md` | 신규(질문 Q1) | 대기열 용량 | 실효 19건(새 job이 자기 자신을 셈) 유지 vs 20건으로 정정 |
 | `unit-20-note.md` | 정정 제안 | R-5-2 | 위 OBS-2에 따라 문구 수정 필요(05 소관) |
 | `unit-20-note.md` | 참고 | R-7 | git status 스냅샷은 정확함(본 06 확인) |
+
+
+---
+
+# 12. 재검증(3회차) — unit-20 v3 (DEC-052/053 3차 재작업: `@require_GET` + 대기열 실효 용량 20 + 503 시 즉시 폐기, 규칙 F 전체 회귀)
+
+> 이 절은 자기완결적이다. 1~10절(v1)과 11절(v2)은 원문 보존본이며, **현재 유효 판정은 이 12절의 「12-9 결론」이다.** 12절 안의 TC 번호는 이 회차 고유이며, TC-226/TC-227은 v2와 같은 ID를 유지하되 **기대값이 바뀐 버전**이다(12-4 (나) 및 12-4-1 참조).
+
+## 12-1. 개요
+- 테스트 대상: `webapp/converter/views.py` v3(현재 작업트리) — `download`·`job_status`의 `@require_GET`, `_save_and_submit()`(EXPIRED 예약 저장 → `submit_job` → 성공 시 조건부 UPDATE로 PENDING 승격, `_submit_lock`), `_discard_job()`(503·예외 시 job 행 + 업로드 즉시 삭제). 함께 회귀: `urls.py`, `templates/converter/*.html`, `static/converter/app.js`, 상호작용 대상 `ratelimit.py`(unit-23 예약 슬롯), `cleanup.py`(unit-22 지연 스윕), `core/middleware.py`·`limits.py`(unit-24), `executor.py`(unit-21 실제 워커).
+- 테스트 유형: 단위(Django `TransactionTestCase`+`Client`, 미들웨어·URLconf 전 구간) + 실서버(로컬 `runserver` 스레드 서버, 실제 executor·실제 변환) + 프런트 로직 자동 검증(jsdom) + 뮤턴트 검증. 병합/07 범위 아님(병렬 웨이브 아님, 단독 호출).
+- 적용 Tier: High(DEC-021) / 속도 트랙: L3.
+- 테스트 목적: (1) DEF-020b-01 종결 증명(AC-18), (2) 대기열 경계 20(AC-5 변경) 및 503 시 폐기, (3) 동시성·락·예약 행 잔존 분석, (4) AC-1~AC-17 전체 회귀, (5) 신규 뮤턴트가 실제로 FAIL로 검출되는지.
+- 관련 산출물: `unit-20-note.md` R-5-2 정정 + R-8(1~7), `verify-log_unit-20-note.md` 회차 3·4, 03 §4-4·§5, `decisions.md` DEC-049·050·052·053.
+- 테스트 수행자: 06(단위테스터) / 일시: 2026-09-29.
+- **5단계 게이트 확인(note R-8-3)**: 게이트1 — 저장소에 ruff/flake8/mypy/eslint 설정이 없음(재확인), 대체로 `py_compile` 통과(이 회차의 모든 실행이 `views.py` import에 성공, `app.js`는 jsdom에서 구문 오류 없이 실행). 게이트2 — note R-8-3의 6개 체크 `[x]` 표기 확인. **반려 사유 없음.**
+
+## 12-2. 범위 / 제외
+- In-Scope: AC-1~AC-17 회귀 + AC-18(신규: 비-GET 메서드 405·부작용 0) + AC-5 변경분(20건 허용/21번째 거절, 503 시 행·업로드 증가 0), DEC-053(폐기 동작), 동시성(8/16/30/40 스레드), 락 직렬화 정도, 예약 EXPIRED 행 잔존 분석, DEC-049 재현(실제 `ModuleNotFoundError`), unit-23/22/24/19 상호작용, 프런트 로직, 뮤턴트.
+- 제외/한계(정직 기록):
+  - **실제 브라우저·스크린리더·모바일 실기기는 이번에도 실행하지 못했다.** AC-11·AC-15·AC-16은 코드 정독 + jsdom(fetch/Blob/`createObjectURL`/`focus`를 스텁으로 대체 — *로직 분기*는 증명하나 *브라우저 런타임*은 증명하지 않음). 이전 회차와 동일한 한계이며 12-8 리스크 1번.
+  - production 설정·gunicorn·Linux·Render 엣지·R2·Neon·SMTP는 미기동(dev 설정 + 격리 SQLite/로컬 스토리지, Windows 10 `runserver --noreload` 단일 프로세스 다중 스레드 = 03 §2-1 `--workers 1 --threads 4`와 같은 "단일 프로세스·다중 스레드" 모델). 실서버 구간의 IP 분리는 production과 같은 `config.middleware.XForwardedForMiddleware`를 테스트 설정 오버레이에서만 활성화해 구현(제품 설정 무수정).
+  - 프런트 jsdom 체크는 v2(62건)와 달리 이번 회차에 **43건으로 재작성**했다(이전 스크립트는 규칙 K로 삭제되어 재사용 불가). 항목 커버 범위는 12-4 (마) 표 참조.
+  - 5단계가 예고한 대로 코드 수정 금지: 소스·설계서·traceability·decisions 미수정.
+
+## 12-3. 환경
+- Windows 10 Pro, Python 3.11.9, Django 5.2.17, Pillow 11.3.0, pypdf 6.19.0, pdfplumber, lxml, reportlab 5.0.1(텍스트 PDF 생성), coverage, node v24.18.0 + jsdom. 격리 venv `.harness-tmp/venv_06_unit20c/`(`webapp/requirements.txt` + `pdf_to_hwpx` 의존성 명시 설치). **`pip install -e .`를 쓰지 않고 `PYTHONPATH=<프로젝트 루트>`로 대체**해 루트 `pdf_to_hwpx.egg-info`가 생기지 않게 함(확인: 생성 없음).
+- 격리: DB `.harness-tmp/t20c_data/db_06_unit20c.sqlite3`(테스트 DB는 별도 파일, `OPTIONS timeout=60`), MEDIA_ROOT `.harness-tmp/t20c_data/media_06_unit20c`, TMP/TEMP도 `t20c_data/tmp`, 서버 포트 **18220**(18xxx), 설정 오버레이 `t20c_settings`(config.settings.dev 상속 + 경로 재정의)·`t20c_settings_xff`(+XFF 미들웨어), 테스트/뮤턴트/스크립트 `.harness-tmp/t20c/`, jsdom `.harness-tmp/jsdom_06_unit20c/`. coverage 데이터 파일도 `t20c_data/` 아래로 지정(`webapp/.coverage` 생성 없음).
+- 방법론: 정상 회귀 단위 테스트에서는 `executor._POOL`만 기록용 페이크로 바꾸고 `executor.submit_job()`의 큐 카운트는 **실제 코드**를 사용(카운트 결과가 곧 검증 대상). 실서버 구간은 stdlib `http.client` 멀티파트 직접 조립 + 실제 executor 스레드풀 + 실제 `pdf_to_hwpx` 변환.
+- DEC-049 재현: 같은 venv에서 `pip uninstall platformdirs`만 수행 → `pdf_to_hwpx.common.logging_setup`의 `from platformdirs import user_log_dir`에서 **실제** `ModuleNotFoundError`(모의 아님). 검증 후 `pip install`로 복구.
+
+## 12-4. 테스트 케이스 및 결과
+
+### 12-4-1. 5단계가 예고한 기대값 변경 2건 — 근거 (테스트를 관대하게 바꾼 것이 아님을 입증)
+| 항목 | v2 기대값 | v3 기대값 | 기대값의 근거(코드가 아니라 상위 문서·결정) | 관대화가 아님의 증거 |
+|---|---|---|---|---|
+| TC-226 / AC-5 (in-flight 20건에서 제출) | 503, 새 job **행·업로드 보존**(21행/파일 1개) | 503, **행 수·업로드 파일 수 증가 0**, 풀 submit 0회, EXPIRED 행 0 | DEC-053(사용자 확정: 즉시 삭제 — 거절된 요청은 재업로드해야 하므로 보존 무가치, 실행되지 않는 PENDING이 대기열 카운트를 최대 60분 점유해 포화가 스스로 길어짐, REQ-011 개인정보 최소처리) | 뮤턴트 MU5(503 시 삭제 제거)·MU10(행 삭제 누락)·MU8(업로드 삭제 누락)이 이 기대값으로 **FAIL**. 즉 기대값은 "보존"과 "폐기"를 실제로 구분한다. 문구·상태코드·풀 미호출·슬롯 `{}`는 v2와 동일하게 엄격 유지 |
+| TC-227 (경계) | 기존 19건 → **503**, 20건 → 503 | 기존 19건 → **202**, 20건 → 503, 21건 → 503 | 03 §4-4 `/convert` 행 "큐 포화(대기 **20건 초과**, §5) → 503", §5 표 "대기열 20건 초과 시 신규 업로드 거절(503)", unit-21 계약(`submit_job`: 기존 in-flight 합계 `>= 20`이면 `QueueFullError` — 호출 시점에 신청 job은 아직 세지 않는다는 의미), DEC-052(2)(사용자 선택: "설계서에 맞춰 20건으로 수정") → "20건까지 허용, 21번째 거절" | 상한 자체는 오히려 더 좁게 검증: 40스레드 동시 폭주에서 in-flight가 **정확히 20에서 멈추고 절대 넘지 않음**(TC-260~266, 실서버 3라운드 max=20). 뮤턴트 MU7(예약 없이 PENDING 즉시 저장 = v2의 19건 동작)이 이 기대값으로 **FAIL**(TC-227/229/260…) |
+
+### (가) AC-18 / DEF-020b-01 종결 (단위 + 실서버)
+| ID | AC | 시나리오 / 검증 포인트 | 기대 | 실제 | 결과 |
+|---|---|---|---|---|---|
+| TC-301 | 18 | DONE+success job(업로드+결과 파일 2개)에 `HEAD/OPTIONS/PUT/PATCH/DELETE/POST` × (`/download/<id>/`, `/api/jobs/<id>/`) | 전부 405 + `Allow: GET`, 매 요청 뒤 파일 2개 유지·`purged_at/downloaded_at` 미기록. 이후 GET status 200(done), GET download 200(헤더 `attachment; filename="converted.hwpx"`, 본문 바이트 일치), **스트림 close 전 파일 2개 유지**, close 후 0개, `downloaded_at/purged_at` 기록, 재GET 404, 이후 status는 200(done) | 일치 | PASS |
+| TC-302 | 18 | POST + CSRF(`enforce_csrf_checks`): 토큰 없음 → 403(CSRF가 먼저), 유효 토큰(`X-CSRFToken` 헤더/폼 필드) → 405 | 403 → 405, 파일·`purged_at` 불변 | 일치 | PASS |
+| TC-303 | 18 | PENDING/PROCESSING/FAILED/EXPIRED/미존재 job에 HEAD | 뷰 진입 전 405(404 아님), 미존재 GET은 404 | 일치 | PASS |
+| TC-304 | 18 | 다른 뷰 회귀: `GET /convert` 405, `PUT /convert` 405, `GET /` 200 | 일치 | 일치 | PASS |
+| TC-305 | 18 | 정상 브라우저 흐름에 405가 발생하지 않음(코드 정적 확인): `app.js`의 `fetch(` 정확히 3곳 = `/convert` POST, `/api/jobs/<id>/` GET(옵션 없음), `/download/<id>/` GET(옵션 없음); `HEAD`/`OPTIONS`/`XMLHttpRequest`/`sendBeacon` 문자열 없음; 템플릿에 `/download` 링크·`prefetch`·`preload` 없음(브라우저 자동 HEAD 유발 요소 없음) | 일치 | 일치 | PASS |
+| E-A(실서버) | 18 | 실제 텍스트 PDF(3페이지) → 202 → done → (비-GET 6종 × 2 URL = 12건 405 + `Allow: GET`, CSRF 없는 POST 403 2건) → 파일 2개·`downloaded_at/purged_at` 미기록 확인 → GET status 200 → GET download 200(헤더 3종, zip 유효: 첫 엔트리 `mimetype` STORED = `application/hwp+zip`, `testzip()` 정상, `section0.xml` lxml 파싱·원문 단어 Quarterly/Report/alpha/beta/fox 포함) → 파일 0 → 재GET 404 → status 200 유지 → 기록 확인 | 전부 일치. **정상 흐름(`/convert` POST 202 → `/api/jobs/` GET 200 → `/download/` GET 200)에서 405 없음** | 53/53 PASS(첫 실행 51/53, 2건은 테스트가 이전 job 파일까지 세는 **테스트 설계 결함** → job별 필터로 수정 후 53/53, 제품 결함 아님) | PASS |
+
+### (나) 대기열 경계 20 / 503 폐기 (AC-5 변경)
+| ID | AC | 시나리오 | 기대 | 실제 | 결과 |
+|---|---|---|---|---|---|
+| TC-226 | 5(변경) | in-flight 20건에서 제출 | 503 + 정확 문구 `지금은 이용자가 많아 서버가 바쁩니다. 1~2분 후 다시 시도해주세요.`, JSON, **행 수·업로드 증가 0**, 풀 submit 0회, EXPIRED 행 0, `_reservations == {}` | 일치 | PASS |
+| TC-227 | 5(변경) | 기존 in-flight 0·1·17·18·19 → 202(새 job `pending`, 행+1·파일+1·풀 1회·in-flight = 기존+1); 20·21·22·40 → 503(증가 0) | 일치 | 일치 | PASS |
+| TC-228 | 5 | 혼합: PENDING10+PROCESSING9 → 202; 10+10 → 503; 0+20 → 503; 19건 + DONE40/FAILED30/EXPIRED30 → 202 후 다음 503 | PENDING+PROCESSING만 카운트 | 일치 | PASS |
+| TC-229 | 5 | 기존 18건에서 연속 4회 | 202, 202, 503, 503; 최종 in-flight 20(전부 pending, EXPIRED 0), 업로드 2개 | 일치 | PASS |
+| TC-230 | 5 | 503 3연속 후 1건을 DONE 처리 | 팬텀 PENDING 없이 즉시 202, 그 다음 503 | 일치(v2의 "포화가 스스로 길어짐" 결함이 없음을 직접 확인) | PASS |
+| TC-231 | 5 | 503 응답 형식 | `application/json`, 문구 정확 | 일치 | PASS |
+| TC-232 | 예외 | `submit_job`이 `RuntimeError("boom C:\\secret")` | 500(바디에 경로 비노출), 행 0·업로드 0·슬롯 `{}`, 이후 요청 202 | 일치 | PASS |
+| TC-233 | 예외 | 같은 IP 503×4 → 슬롯 `{}` 반복, 이후 `OSError` 500×4 → 행·파일 0·슬롯 `{}` → 202(429 아님) | 슬롯 누수 0 | 일치 | PASS |
+| TC-234 | 예외 | 예약 저장(`job.save`) 자체 실패 | 500, 행 0, 업로드 파일 폐기 | 일치 | PASS |
+| TC-235 | 예외 | 폐기 중 업로드 삭제(`delete_job_objects`)가 `OSError` | 503 유지, 새 행은 삭제됨, ERROR 로그 `삭제 실패` | 일치 | PASS |
+| TC-236 | 예외 | 승격 UPDATE만 실패 | 202 유지(이미 제출됨), ERROR 로그 `승격 실패`, 행은 `expired`로 잔존, 폴링 404 | 일치 — **OBS-7** 참조 | PASS(관찰) |
+| E-B(실서버) | 5 | 실서버(실제 executor)에서 기존 fake in-flight 0/1/18/19 → 202(새 job 상태 `pending`), 20/21/25 → 503(행·업로드 증가 0, 문구 정확, 재시도도 503), PENDING10+PROCESSING9(+DONE/FAILED/EXPIRED 70) → 202, 10+10 → 503, 18건 연속 → 202/202/503(in-flight 20) | 일치 | 34/34 중 위 항목 전부 PASS | PASS |
+
+### (다) 동시성 / 락 / 예약 행 잔존
+| ID | 시나리오 | 기대 | 실제 | 결과 |
+|---|---|---|---|---|
+| TC-260~266 | 다른 IP의 동시 요청(Barrier): 8스레드×기존 17건, 8×0, 16×12, 40×0, 40×19, 40×20, 8×17 5회 반복 | 202 수 = `min(N, 20−기존)`, 나머지 503, in-flight 최종 `min(20, 기존+N)`(**20 초과 없음**), EXPIRED 0, PENDING = 기존+202, 업로드 파일 = 202 수, 풀 submit = 202 수, 슬롯 `{}` | 전부 일치(총 11회 폭주, 500/예외 0) | PASS |
+| TC-267/268 | 워커가 **승격 전에** PROCESSING / DONE으로 바꿈(submit 훅에서 동기 UPDATE) | 승격 조건부 UPDATE가 덮어쓰지 않음(최종 `processing` / `done`) | 일치 | PASS |
+| TC-269 | 실제 다른 스레드가 submit 직후 PROCESSING으로 바꾸는 경쟁 50회 | 최종 상태 ⊆ {pending, processing, done}, EXPIRED 0 | 일치 | PASS |
+| TC-270 | 락 안 느린 submit(1.0초 sleep) 2스레드, 기존 19건 | [202, 503](21번째 통과 없음), 두 번째 요청은 첫 번째 submit이 끝나야 진입(직렬화) | 지연 측정 **1.03초 / 2.05초**, 코드 [202, 503], in-flight 20, EXPIRED 0, 업로드 1개 | PASS |
+| TC-271 | 락 보유 3.0초 동안 다른 요청 | 검증 400 2종·`GET /`·`GET /api/jobs`·미존재 download 404는 **지연 없음**(락 밖), 유효 업로드만 직렬화 대기 | 400: 0.00초/0.00초, index 0.00초, status 0.00초, 404 0.02초, **유효 업로드(다른 IP) 6.0초 = 남은 락 대기 ≈3초 + 자기 submit 3초**(테스트가 모든 submit을 3초로 지연시킴) | PASS |
+| TC-272 | 예약 EXPIRED 행이 존재하는 동안(느린 submit) unit-22 스윕 실행(61분 경과 DONE 1건 동시 존재) | 스윕은 오래된 DONE만 정리, 예약 행 보존, 202 성공, 승격 후 `pending` | 일치 | PASS |
+| TC-280 | `submit_job`이 **`BaseException` 하위 클래스**를 던짐(SystemExit/GeneratorExit/타임아웃 류 모사) | (요구: 예약 EXPIRED 행·업로드가 남지 않아야 함) | **EXPIRED 행 1건 + 업로드 파일 1개 잔존**(`rows: ['expired']`). 슬롯 `{}`·`_submit_lock` 해제는 정상. **5시간 경과 후 TTL 스윕도 0건 처리**(EXPIRED를 건너뜀) → 영구 잔존 | **결함 DEF-020c-01(Low)** |
+| TC-281 | `RuntimeError/OSError/MemoryError/ValueError/KeyError` 5종 | 500, 행 0·업로드 0 | 일치 | PASS |
+| TC-282 | 제출 예외 **+ 폐기(행 삭제)도 실패**(DB 장애 지속 모사) | (참고) | EXPIRED 행 잔존(500) — DEF-020c-01 범위 | 관찰 |
+| PD-1(별도 프로세스) | **프로세스 즉사**: `submit_job`이 `os._exit(3)`(OOM kill·gunicorn worker timeout SIGKILL 모사) | 분석 항목 | 새 프로세스에서 확인: 행 `expired` 1건 + `uploads/<id>.pdf` 잔존, **5시간 경과 후 스윕 0건**, 여전히 잔존, in-flight 카운트는 0(대기열 용량에는 영향 없음), 폴링은 404 | **DEF-020c-01** (근거 실측) |
+| E-B(실서버) 동시성 | 실서버 30스레드 동시(XFF로 IP 분리, 40페이지 PDF, 기존 fake 12건) × 3라운드 + DB 샘플러(5ms 간격)로 in-flight 최대치 측정 | 202 ≥ 8, 응답은 전부 202/503(500·429 없음), in-flight 관측 최대치 ≤ 20, EXPIRED 0, 실제 job 행 = 202 수, 업로드 = 202 수, 전부 done | 라운드별 **202=8, 503=22, in-flight 최대 20**, 나머지 전부 일치 | PASS |
+
+**워커가 죽는 시나리오의 EXPIRED 예약 행 잔존 가능성 분석**: 예약 행이 존재하는 구간은 `_submit_lock` 안의 `job.save()`(EXPIRED) ~ 승격 UPDATE 사이(정상 시 수 ms~수십 ms, DB 지연이 큰 Neon에서는 그만큼 길어짐)이며, 락으로 직렬화되므로 **한 시점에 최대 1건**이다. (a) `Exception` 계열(503 포함)은 `_discard_job()`로 정리됨을 실측(TC-226/232/281). (b) **`BaseException`·프로세스 사망·폐기 자체의 실패**는 정리 경로를 타지 못해 EXPIRED 행+업로드가 남고, unit-22 스윕은 `exclude(status=EXPIRED)`라 **영구 잔존**(TC-280/282/PD-1). 이 job_id는 클라이언트에 전달되지 않으므로 사용자 영향은 없고 대기열 카운트에도 잡히지 않아 **용량 영향 0**이며, 잔존물은 업로드 PDF(개인정보성 데이터)뿐이다. production에서는 R2 버킷 라이프사이클(03 §6-2 3번째 계층, 코드가 아니라 콘솔 설정이며 이번에 미검증)이 백스톱이다. 워커 스레드(`executor._run`)가 죽는 경우는 이 창과 무관하다(승격 이후에는 PENDING/PROCESSING이라 TTL 스윕 대상).
+
+### (라) AC-1~AC-17 회귀 + 통합 상호작용
+| ID | AC | 시나리오 | 결과 |
+|---|---|---|---|
+| TC-320/321 | 1 | `GET /`: 200, `text/html`, nosniff, `panel-a~d`·`csrfmiddlewaretoken`·`converter/app.js`·`<noscript` 존재, `csrftoken` 쿠키, `max-upload-mb`=50/`soft-timeout-seconds`=300 JSON 스크립트; `limits`를 10MB/60초로 패치하면 템플릿 값이 따라감(unit-24 연동) | PASS |
+| TC-322/323 | 2,3 | 정상 202(uuid4, `pending`, 키 `uploads/<id>.pdf`, 디스크 바이트 동일, 풀 1회, 슬롯 `{}`); PDF 판정: `A.PDF`(octet-stream)·`noext`(application/pdf) 202, `x.txt`·`x.pdf.txt`·`pdf`(text/plain) 400 | PASS |
+| TC-324/325 | 3,4 | 400 세트(파일 없음/비-PDF/OCR 언어 없음·`ocr_lang_kor=off`·빈 값/파일 자리에 문자열) 문구 정확 + 행·파일 0·슬롯 `{}`; OCR 조합 5종 저장값 | PASS |
+| TC-330~332 | 6,7 | 404 4종(문구 정확), 409(PENDING/PROCESSING), 폴링 페이로드 스키마 | PASS |
+| TC-333/334 | 8,9 | FAILED 422 고정 문구·내부 문자열("Traceback secret /srv/app.py") 비노출; DONE+false 422 `errors` 그대로; DONE+`result_success=NULL` 422(OBS-4 유지) | PASS |
+| TC-335~337 | 10 | DONE+true 다운로드 200·헤더 3종·바이트 일치·close 전 파일 2개 유지·close 2회에도 삭제 1회·`downloaded_at/purged_at`·재다운로드 404·status 200 유지; 결과 오브젝트 없음 404; `_AutoDeleteFile` 이중 close/내부 close 예외 시에도 콜백 | PASS |
+| TC-338/339 | 6 | 경로 탈출·비-UUID 8종 404, `default_storage.path("../../../etc/passwd")` 예외, 대문자 UUID는 404(uuid 컨버터는 소문자만 — 초안의 "200" 기대는 **테스트 설계 오류**였고 v2 TC-239와 동일하게 정정) | PASS |
+| TC-340 | 5/413 | 미들웨어 판정 `50MB−1`·`50MB`·`""`·`"abc"` 통과, `50MB+1` 413; `MIDDLEWARE[0]`가 ContentLengthLimit; 한도 상수(50MB/20/2/300초/`executor._PENDING_QUEUE_LIMIT`=20) | PASS |
+| E-C(실서버) | 5/413 | 실바이트 요청 본문 52,428,799 → 202, **52,428,800 → 202**, **52,428,801 → 413**(0.13초, 즉시 거절·행/파일 증가 0), 52,429,800 → 413, 이후 서버 정상 | 5/5 PASS |
+| TC-341 | unit-23 | 같은 IP 3회 → 202, 202, 429(뷰 미호출, 풀 2회), 다른 IP 202, 1건 done 처리 후 202, 슬롯 `{}` | PASS |
+| TC-342/343 | unit-23 | 400×20 후 21번째(유효 PDF) 429·행 0; 503×4·`save_uploaded_file` `OSError`×3(바디에 경로 비노출) 후에도 슬롯 `{}`, 이어서 202; `GET /convert` 405 | PASS |
+| TC-344 | CSRF | 토큰 없음 403, 위조 토큰 403, `Origin: https://evil.example` 403, 유효 `X-CSRFToken` 202, 폼 필드 방식 202, 쿠키 없음 403 (행 2건, 슬롯 `{}`) | PASS |
+| TC-345/346/347 | unit-22 | `GET /` 한 번으로 61분 경과 DONE → EXPIRED·파일 삭제·status/download 404, 스윕 예외에도 `GET /` 200+ERROR 로그; **스윕은 EXPIRED를 건너뛰고 60분 미만 PENDING은 안 건드리며 90분 경과 좀비 PENDING만 정리**(예약 행 잔존 분석의 전제); `run_lazy_sweep_if_due`가 예외를 밖으로 던져도 인덱스 200 | PASS |
+| E-A(실서버) | 1~10,17 | 400 3종·PENDING 409·미존재 404·DONE+false 422·FAILED 422(내부 문자열 비노출)·CSRF 403·**파일명 공격 5종**(`../../evil.pdf`, 역슬래시, CRLF+따옴표 헤더 주입 시도, 300자 한글, 개인정보성 이름) 전부 202/400/429이며 500 아님·`X-Injected` 응답 헤더 없음·MEDIA_ROOT 밖 `evil.pdf` 생성 없음·저장 키는 `uploads|results/<uuid>.(pdf|hwpx)`뿐 | 53/53 PASS |
+| E-A 반복 | 워커-승격 경쟁 | 실제 텍스트 PDF 5회 연속 202 → 즉시 폴링: 상태 전이 `processing→done` 4회, `pending→processing→done` 1회. **404·expired 관측 0** | PASS |
+
+### (마) AC-17 — DEC-049 executor import 실패 재현 (platformdirs 미설치, 실제 `ModuleNotFoundError`)
+| ID | 시나리오 | 결과 |
+|---|---|---|
+| TC-300 | 환경 자체가 진짜 미설치임을 검증(`import platformdirs` → `ModuleNotFoundError`) | PASS |
+| TC-301x~309x (단위 10건) | 500 JSON·`nosniff`·04 INTERNAL_ERROR 문구 정확 일치·바디/헤더에 `platformdirs/Traceback/ModuleNotFoundError/ImportError/site-packages/venv/.py/executor/pdf_to_hwpx/C:\/SECRET_KEY` 없음·"이용자가 많아" 없음(503 위장 아님); `converter` 로거 ERROR 정확히 1건, `exc_info`=`ModuleNotFoundError(name='platformdirs')`, 포맷 출력에 `Traceback (most recent call last)`; 업로드 파일명 미로깅; 고아 job/업로드 0건(일반·OCR 옵션); 같은 IP 6연속 500에서도 슬롯 `{}`; 시간당 카운터는 500도 계수 → 21번째 429(뷰 미호출); `/`·`/healthz`·`/privacy/` 200; 400 경로는 import보다 앞; CSRF 누락 403 → 유효 토큰 500; **큐 포화(25건) 상태에서도 500(503 위장 아님), 행 25건 불변**; 413 | 10/10 PASS(2회 실행) |
+| E-D(실서버) | 실서버에서 4회 500(JSON 일반 문구, 응답에 내부 정보·503 위장 없음), 고아 job 0·업로드 0, **서버 로그에 `Traceback` ≥4건 + `ModuleNotFoundError: No module named 'platformdirs'`**, 로그에 파일명(홍길동) 없음, 3개 무관 라우트 200, 같은 IP 6연속 500(429 없음 = 슬롯 누수 0), 큐 포화 상태에서도 500. **`pip install platformdirs` 후 서버 재시작 없이** 202 → `pending→processing→done` → 다운로드 200(PK zip) → 파일 0 | 17/17 + 4/4 PASS |
+
+### (바) 프런트(app.js) — jsdom 자동 검증 43체크 (실제 Django 렌더 HTML + 실제 app.js)
+| 검증 | 결과 |
+|---|---|
+| AC-14 정상/정확히 50MB 허용/50MB+1 즉시 차단(서버 왕복 0), AC-13 OCR 토글·언어 0개 시 오류+제출 비활성·영어만 선택 시 활성 | PASS |
+| AC-12: 413/429/503/500/400/403/**405**/네트워크 오류 모두 04 §1-2 문구 정확, Panel A 유지·버튼 복원·`?job=` 미설정·서버 문구 미노출 | PASS(8) |
+| AC-15: 202 → Panel B·`?job=<id>`·포커스가 새 패널 `<h1>`, 원본 파일명 sessionStorage 보관, FormData에 csrf·file 포함, `POST /convert` 메서드 | PASS |
+| 폴링 단계 라벨/`1/3페이지`, done+경고 배지·경고 상세 텍스트 렌더(HTML 미해석), failed·done+errors 분기(다운로드 없음)·done 무경고, 폴링 404 → Panel D, 재시도/새 업로드 버튼 → Panel A·`?job` 제거·포커스 | PASS |
+| AC-11: 다운로드 = `fetch('/download/<id>/')` **옵션 없는 GET** → blob → 동적 `<a download>` 클릭(직접 이동 아님), 저장 파일명 `보고서 2026.pdf`→`보고서 2026.hwpx`; 실패 문구 409/404/500/422/405 | PASS |
+| AC-16: 폴링 4회+ 실패 → 오프라인 배너(Panel B 유지), 복구 시 배너 숨김+폴링 자동 재개; 소프트 타임아웃 배너; `?job=` 재진입 시 폴링 재개; XSS(`<img onerror>`, `<b>`)는 텍스트로만 렌더 | PASS |
+| **전체 fetch 호출 56건 감사**: `/convert`는 전부 POST, `/api/jobs`·`/download`는 전부 GET, 그 외 URL·HEAD/OPTIONS/PUT 0건 → 정상 브라우저 흐름에서 405가 발생할 수 없음 | PASS |
+→ **43/43 PASS** (jsdom은 fetch/Blob/`createObjectURL`/`focus`를 스텁으로 대체하므로 브라우저 런타임 동작은 증명하지 않음 — 12-8 리스크 1번).
+
+### (사) 뮤턴트 검증 (`views.py`를 문자열 치환한 변형을 URLconf에 주입해 신규 스위트 55건 전체를 실행; 대조군 M0=현재 소스 그대로)
+| ID | 변형 | 기대 | 실제 (FAIL한 대표 테스트) |
+|---|---|---|---|
+| M0 | 현재 소스 복사본(주입 메커니즘 자체 검증) | 55건 전부 PASS | 55건 OK — 메커니즘이 자체 FAIL을 만들지 않음 |
+| MU1 | `download`의 `@require_GET` 제거 | FAIL | TC-301/302/303 FAIL |
+| MU2 | `job_status`의 `@require_GET` 제거 | FAIL | TC-301/302/303 FAIL |
+| MU3 | 승격 UPDATE의 `status=EXPIRED` 조건 제거(워커 상태 덮어씀) | FAIL | TC-267/268(워커가 먼저 바꾼 PROCESSING/DONE이 pending으로 덮임), TC-236 FAIL |
+| MU4 | `_submit_lock` 제거 | FAIL | TC-263/264(40스레드)·**TC-270(느린 submit 결정적 재현: 21건 통과)** FAIL. 참고: 8스레드 시나리오(TC-260~262)는 이 뮤턴트를 잡지 못함 → 락 검출은 40스레드+느린 submit 테스트에 의존(11회 폭주 중 40스레드 2회+결정적 1회로 확보) |
+| MU5 | 503 시 `_discard_job` 제거 | FAIL | TC-226/227/228/229/233/235/260~266/270 다수 FAIL |
+| MU6 | 일반 예외 시 `_discard_job` 제거(**EXPIRED 예약 삭제 누락**) | FAIL | TC-232/233/234/281 FAIL |
+| MU7 | 예약 없이 PENDING으로 바로 저장(**v2의 19건 재현**) | FAIL | TC-227/228/229/230/260/262/263/264/266/270/322 등 14건 FAIL |
+| MU8 | `_discard_job`에서 업로드 삭제 누락 | FAIL | TC-226/227/232/233/234/235/281/260~266/270 16건 FAIL |
+| MU9 | 승격 UPDATE 자체 제거(행이 EXPIRED로 남음) | FAIL | TC-227/229/260~266/270/271/322/341 등 16건 FAIL |
+| MU10 | `_discard_job`에서 행 삭제 누락 | FAIL | 15건 FAIL |
+→ **10개 뮤턴트 전부 FAIL로 검출, 생존 0.** (요청 목록의 6종 + 부가 4종.)
+
+## 12-5. 커버리지
+- AC ↔ TC 추적성: AC-1: TC-320,321 / AC-2: TC-322,323,E-A / AC-3: TC-323,324 / AC-4: TC-324,325 / **AC-5(변경): TC-226~236, 260~272, E-B, E-C** / AC-6: TC-330,338,339 / AC-7: TC-331 / AC-8: TC-333 / AC-9: TC-334 / AC-10: TC-335~337,E-A / AC-11~16: (바) jsdom / AC-17: TC-300~309x,E-D / **AC-18: TC-301~305,E-A,(바)의 fetch 감사**. **18/18 인수 조건 커버.**
+- 신규 테스트 규모: 단위 정상환경 56건(방법 5·큐 11·동시성/락 17·회귀 24 — 12-4 (다)의 TC-282 포함) + 미설치환경 10건, 실서버 체크 53+34+5+21, jsdom 43체크.
+- `views.py` 라인·분기(`--branch`): 정상 환경 실행 116문장 중 미커버 = ImportError 분기(105~111행)뿐, 미설치 환경(AC-17) 실행이 그 분기를 커버. 합집합 측정(TC-347 추가 전)에서 미커버는 56~57행(`index()`의 스윕 예외 가드)뿐이었고 TC-347로 커버 → 합집합 100% 기대(TC-347 추가 후 합집합은 재측정하지 않음 — 정상환경 단독은 98%, 분기 미커버 0). 분기 20/20 커버.
+- `app.js`: 커버리지 도구 미사용, jsdom 43체크로 제출/폴링/결과/다운로드/오프라인/재진입/검증 경로를 실행. 브라우저 전용 API 실동작은 미검증.
+- 미커버 사유: 실제 스트리밍 도중 연결 끊김, 실 브라우저, production/gunicorn/Linux 기동.
+
+## 12-6. 결함 및 관찰 목록
+
+### 결함(Defect)
+| ID | 심각도 | 상태 | 내용 | 재현 절차 | 권고 |
+|---|---|---|---|---|---|
+| DEF-020b-01 (v2) | Low | **Closed (v3에서 수정, 이번 회차 검증 완료)** | `HEAD /download/<id>/`가 결과를 삭제하던 결함. `download`·`job_status`에 `@require_GET` 적용으로 종결 | TC-301~305, E-A(실서버 비-GET 12건 405 + Allow: GET, 파일 유지, 이후 GET 200/재GET 404), 뮤턴트 MU1/MU2 FAIL로 검출력 확인 | — |
+| **DEF-020c-01 (신규)** | **Low** | **Open** (5단계 재작업 또는 위험 수용 결정 필요) | v3의 예약 행(EXPIRED)은 `except Exception` 경로에서만 폐기된다. **`BaseException`(SystemExit·GeneratorExit·타임아웃 류), 프로세스 사망(OOM kill·gunicorn worker timeout SIGKILL), 폐기(행 삭제) 자체의 실패** 시 EXPIRED 예약 행과 업로드 PDF가 남고, unit-22 스윕이 `exclude(status=EXPIRED)`라 **영구 잔존**한다(TTL 60분 삭제 약속 위반 소지). v2에서는 행이 PENDING이라 스윕이 정리했으므로 **v3 리팩터가 새로 만든 잔존 경로**다(v1/v2에는 없음, 다른 단위 유래 아님 — 원인은 이 단위 `views.py`(+ unit-22 스윕 조건과의 상호작용)). | 단위: `submit_job`이 `BaseException` 하위 클래스를 던지게 패치 → 요청 후 `ConversionJob` 1건(`expired`)·`uploads/<id>.pdf` 1개, 5시간 경과로 만든 뒤 `_sweep_expired_jobs()` → 0건(TC-280). 별도 프로세스: `submit_job = lambda: os._exit(3)` 후 새 프로세스에서 행·파일 잔존 및 스윕 0건(PD-1). 폐기 실패: `filter(job_id=…).delete()` 실패 시 잔존(TC-282). | 심각도 근거: (1) 발생창이 락 안 수 ms~수십 ms, (2) 비정상 종료 필요, (3) 사건당 최대 1건(락 직렬화), (4) job_id 미노출이라 사용자 영향 없고 대기열 카운트·용량 영향 0, (5) 잔존물은 업로드 PDF로 production은 R2 라이프사이클 백스톱(미검증)이 있음 → Low. 권고(택1 또는 병행): (a) `_save_and_submit`/`convert`에서 `except BaseException` 또는 `try/finally`로 폐기 보장 — 단, 프로세스 사망은 못 막음, (b) **unit-22 스윕이 `created_at` 60분 경과 + `purged_at IS NULL`인 EXPIRED 행도 정리**(프로세스 사망까지 포괄, 가장 견고). 06은 동작 변경이라 직접 수정하지 않음. |
+
+### 관찰(Observation, 결함 아님)
+- **OBS-1 (종결)**: 대기열 실효 용량 19건 → 20건으로 정렬됨(TC-227, 실서버 in-flight 최대 20).
+- **OBS-2 (미결, 규칙에 따라 재확인만)**: 오류 메일(DEC-050(2) 전제 정정 + DEC-040 연동)은 사용자가 "나중에"로 결정했다. 이번 회차에서 코드·설정 변경이 없음을 전제로 재측정하지 않았다(v2 11-6 OBS-2 기록 그대로 유효: 뷰가 반환한 5xx도 `django.request` ERROR 로깅 → `ADMINS`+SMTP 허용 시 503마다 메일 가능).
+- **OBS-3/4/5/6**: v2와 동일(인덱스가 POST도 200 / DONE+`result_success=NULL` → 422 `errors: []`(TC-334로 재확인) / 매직넘버 검사 없음 / Django 기본 HTML 400·413 plain-text 바디는 app.js가 상태코드만 사용).
+- **OBS-7 (신규)**: 승격 UPDATE만 실패하면(DB 오류) 202를 돌려주고 행은 `expired`로 남아 실제 워커가 PROCESSING으로 바꾸기 전까지 폴링이 404가 된다(TC-236; 대기열 뒤쪽이면 화면이 Panel D "요청을 찾을 수 없습니다"로 전환될 수 있음). 정상 경로에서는 발생하지 않고(E-A 5회·E-B 90건에서 404/expired 관측 0), DB 장애가 겹친 경우에만 해당. 승격 실패는 ERROR 로그가 남는다.
+- **OBS-8 (신규)**: 락은 `job.save`+`submit_job`(DB 카운트 1회 + 풀 submit)만 감싸며 파일 저장·검증은 락 밖이다. 락 보유 중에도 400 검증·`GET /`·폴링·404는 지연이 없고(TC-271) 유효 업로드만 직렬화된다. 락 보유 시간은 DB 왕복 시간에 비례하므로(SQLite 로컬에서는 수 ms) 원격 Neon에서 늘어날 수 있으나, 최대 동시 요청이 4 스레드(`--threads 4`)라 실질 영향은 작을 것으로 판단(미실측 → 12-8).
+- **OBS-9 (신규, 문서)**: 03 §4-4 `/convert` 절차 (3)은 "`ConversionJob(status=PENDING)` 행 생성"으로 서술돼 있으나 v3 구현은 EXPIRED로 먼저 저장 후 PENDING으로 승격한다(외부 관찰 결과 — 승격 후 `pending` — 는 설계와 일치). 설계서에 한 줄 정정을 남기면 이후 유지보수자의 혼동을 막을 수 있다(03 §4-4/DEC-052 반영 시).
+
+## 12-7. 테스트 환경 정리(Teardown) — 규칙 K
+- 생성한 임시 아티팩트(전부 `.harness-tmp/` 하위, 식별자 `_06_unit20c`): `venv_06_unit20c/`, `t20c/`(설정 오버레이·테스트·뮤턴트 소스·스크립트), `t20c_data/`(SQLite, MEDIA, TMP, 서버 로그, coverage 데이터), `jsdom_06_unit20c/`(node_modules 포함). **`.harness-tmp/` 밖 산출물 없음**: `pip install -e .`를 쓰지 않아 루트 `pdf_to_hwpx.egg-info` 미생성(확인), `webapp/.coverage` 미생성(coverage 데이터 파일을 `t20c_data/`로 지정, 확인), `webapp/staticfiles`·`__pycache__`(gitignore, `PYTHONDONTWRITEBYTECODE=1`) 없음.
+- 서버: 포트 18220 서버는 각 구간 후 종료(리스너 PID만 `taskkill`), 최종 `netstat`로 18xxx 대역 리스너 없음 확인. 오케스트레이터의 `127.0.0.1:8000` 서버(PID 4748/22700)는 종료·수정하지 않았고 종료 시점에도 LISTENING 유지를 확인했다. `venv_run_local`·`run_local.log`·`webapp/db.sqlite3`·`webapp/.dev-media`는 접촉하지 않음. (`.harness-tmp/_03_hwpx`는 이 06이 만들지 않은 타 작업 산출물 — 접촉 없음.)
+- 결과서 작성 완료 시점 재확인: `git status --short`는 `M docs/harness/units/unit-20-test.md`, `M docs/harness/verify-log_unit-20-test.md` 2건뿐(그 사이 타 변경이 커밋됨), `.harness-tmp/`에는 `run_local.log`, `venv_run_local`만 존재, 루트 `pdf_to_hwpx.egg-info`·`webapp/.coverage` 없음.
+- 삭제 완료 후 `ls -a .harness-tmp` → `_03_hwpx`(타 작업), `run_local.log`, `venv_run_local`(오케스트레이터)만 존재.
+- 정리 후 `git status --short` 원문:
+  ```
+   M .gitignore                                       (타 작업 — 이 06 무관)
+   M docs/harness/03-system-design.md               (오케스트레이터/타 단위)
+   M docs/harness/decisions.md                       (오케스트레이터)
+   M docs/harness/traceability.md                    (오케스트레이터)
+   M docs/harness/units/unit-20-note.md              (unit-20 05 재작업 v2·v3 — 본 06 이전 변경)
+   M docs/harness/units/unit-20-test.md              (unit-20 06 — 본 회차 12절 추가)
+   M docs/harness/units/unit-23-note.md              (unit-23)
+   M docs/harness/units/unit-9-note.md               (unit-9)
+   M docs/harness/units/unit-9-test.md               (unit-9)
+   M docs/harness/verify-log_03-system-design.md     (03)
+   M docs/harness/verify-log_unit-20-test.md         (unit-20 06 — 본 회차 로그 추가)
+   M docs/harness/verify-log_unit-9-test.md          (unit-9)
+   M webapp/config/wsgi.py                           (타 단위)
+   M webapp/converter/ratelimit.py                   (unit-23)
+   M webapp/converter/views.py                       (unit-20 05 재작업 v2·v3 — 06은 미수정)
+   M webapp/core/net_guard.py                        (타 단위)
+  ?? docs/harness/units/unit-23-test.md              (unit-23)
+  ?? docs/harness/verify-log_unit-20-note.md         (unit-20 05)
+  ?? docs/harness/verify-log_unit-23-note.md         (unit-23)
+  ?? docs/harness/verify-log_unit-23-test.md         (unit-23)
+  ?? docs/harness/verify-log_unit-9-note.md          (unit-9)
+  ?? "\354\236\221\354\227\205\354\203\201\355\203\234/"          (오케스트레이터 "작업상태/")
+  ?? "\354\260\270\354\241\260HWPX/"                     (오케스트레이터/타 작업 "참조HWPX/")
+  ```
+  (`"HWPX변환완료/"` 항목은 이 06 착수 시점에는 미추적으로 보였으나 종료 시점 출력에서는 사라졌다 — 이 06이 만든 것이 아니며 다른 작업의 변경이다. 소스·설계서·traceability·decisions·`pdf_to_hwpx/`·`tests/`·`참조HWPX/`는 수정하지 않았다. **이 06이 만든 임시 아티팩트·미추적 잔여물 없음.**) 작업 중 강제 중단(TaskStop)은 없었다(백그라운드 서버 태스크 알림은 포트 리스너 종료에 따른 정상 종료).
+
+## 12-8. 리스크 및 잔존 이슈 (결함 아님, 09 이관·재확인)
+1. **실 브라우저 미실행**: fetch/Blob/`createObjectURL`/`download` 속성·저장 대화상자 실제 파일명(AC-11), 스크린리더·포커스(AC-15), DevTools 오프라인(AC-16), 반응형은 코드 리뷰+jsdom 로직으로만 확인. 08 또는 배포 후 최소 1회 수동 스모크 필요.
+2. **다중 워커 시 `_submit_lock`·`ratelimit._reservations`·LocMemCache는 프로세스 로컬** → gunicorn worker를 2개 이상으로 늘리면 용량 판정이 ±(워커 수−1)건 한도를 넘길 수 있다. 03 §2-1 `--workers 1 --threads 4` 전제 하에서만 정확(11절과 동일, DEC-053 명시). 이번 회차는 단일 프로세스 다중 스레드만 검증.
+3. **gunicorn·Linux·Render 엣지·R2·Neon·SMTP 미검증**: Windows `runserver`로 대체. 특히 Linux의 열린 파일 삭제 의미, R2(S3) 삭제/열기 경합, Render 엣지의 HEAD/OPTIONS 프로브 동작(이제 405이며 부작용 없음), 원격 DB 지연 하 락 보유 시간(OBS-8)은 09/배포 후 확인.
+4. **오류 메일 건(DEC-050(2) 정정·DEC-040 연동)**: 사용자 결정 "나중에" — 이번 회차 코드·설정 변경 없음(재확인만).
+5. **화면 500 문구**: 사용자 결정 DEC-050(1) 유지(app.js는 500 바디를 폐기하고 04 §1-2 "기타 오류" 문구 표시) — 결함 아님. jsdom AC-12에서 500/405/400/403 모두 동일 일반 문구로 확인.
+6. **스트리밍 중단 시 데이터 손실(DEC-036 설계 리스크)**: 다운로드 도중 연결이 끊겨도 `close()`가 삭제를 수행 — HEAD 결함은 해소됐으나 이 근본 트레이드오프는 그대로다(로컬 재현 곤란, 11-8 4번 승계).
+7. **SQLite로 검증**: 동시성 실측이 SQLite(파일 DB, WAL 아님, timeout 60초)에서 수행됨. 락은 앱 레벨 `threading.Lock`이라 DB 종류와 무관하게 동작하나, Postgres의 트랜잭션 격리·지연 특성 하에서의 동시 폭주는 미실측.
+8. **DEF-020c-01 Open**(12-6).
+
+## 12-9. 결론 및 판정
+- [x] **CONDITIONAL PASS** — **AC-1~AC-18 18/18 PASS**. DEF-020b-01(HEAD가 결과 삭제)은 **Closed**(단위+실서버+뮤턴트로 종결 증명), 대기열 실효 용량은 **20건 허용/21번째 거절**로 정렬됐고(OBS-1 종결) 기대값 변경 2건은 03 §4-4/§5·DEC-052/053에 근거하며 뮤턴트로 관대화가 아님이 입증됐다. 신규 뮤턴트 6종 + 부가 4종 전부 FAIL로 검출. 조건: **Low 결함 DEF-020c-01 1건 Open**(BaseException·프로세스 사망·폐기 실패 시 EXPIRED 예약 행+업로드 영구 잔존) — (a) 05로 반려해 폐기 보장(`BaseException`/`finally`) 및/또는 unit-22 스윕에 stale EXPIRED 정리 추가 후 06 미니 재검증, 또는 (b) 오케스트레이터가 위험 수용을 DEC로 기록하고 07 진행 중 택1. Critical/High 없음. Teardown 확인 완료(12-7).
+- 07 handoff 시 확인 요청: (1) DEF-020c-01 처리 결정, (2) OBS-9 설계서 정정 여부, (3) OBS-2 오류 메일·DEC-040 연동(나중), (4) 07 필수 케이스(DEC-049): `requirements.txt`만으로 새 venv를 만들어 기동·변환(unit-26 산출, 이번 06은 `requirements.txt` + `pdf_to_hwpx` 의존성 명시 설치).
+
+## 12-10. 내부 검증 (규칙 B, 상세는 `verify-log_unit-20-test.md` 회차 3)
+- 1차: 18개 AC 전부에 TC 대응, 기대값 근거를 03/DEC/04에 명시, 작성 중 발견한 **테스트 설계 결함 7건**(제품 결함 아님)을 재실행으로 해소.
+- 2차: "이 결과를 07에 넘겨도 되는가"를 의심 — 락 뮤턴트가 8스레드에서 생존하는 문제를 인지하고 결정적 테스트(TC-270)로 보강, DEF-020c-01이 테스트 artefact가 아님을 별도 프로세스 `os._exit` 재현으로 확인, 실서버 IP 분리·워커-승격 경쟁 반복 관찰.
+- 3차: 조치 반영 후 전 스위트 재실행 — 정상 환경 단위 4회 연속 OK(55건×3, 최종 56건), 미설치 환경 10건×2 OK, jsdom 43/43, 실서버 A 53/53·B 34/34·C 5/5·D 17/17+4/4. 테스트 설계 결함 잔존 0건.
+
+## 12-11. 공유 문서 갱신 요청 (직접 수정하지 않음)
+| 대상 | REQ-ID / DEC | 컬럼 | 값 |
+|---|---|---|---|
+| `traceability.md` | REQ-001 | 단위테스트(unit-n-test) | `unit-20-test.md 12절(재검증 3회차, v3) — CONDITIONAL PASS: AC-1~18 18/18 PASS(단위 56+미설치환경 10+실서버 113체크+jsdom 43, 뮤턴트 10종 전부 검출), DEF-020b-01 Closed, 신규 DEF-020c-01(Low, BaseException/프로세스 사망 시 EXPIRED 예약 행·업로드 영구 잔존) Open. 실브라우저 미실행` |
+| `traceability.md` | REQ-010 | 단위테스트 | 위와 동일 + `DEF-020b-01(HEAD 시 결과 삭제) 종결 검증 완료(REQ-010 다운로드 후 삭제 무결)` |
+| `traceability.md` | REQ-015 | 단위테스트 | 위와 동일(프런트 jsdom 43체크, 정상 흐름에서 405 미발생을 fetch 56건 감사로 확인, 실브라우저 미실행) |
+| `traceability.md` | REQ-029 | 단위테스트/비고 | `대기열 실효 용량 20건 정렬 검증(20건 허용/21번째 거절, 40스레드 in-flight ≤20, 실서버 3라운드 max 20), 포화 503 시 팬텀 PENDING 제거·행/업로드 즉시 폐기 검증(unit-20 12절)` |
+| `traceability.md` | REQ-001 / REQ-015 | 구현 상태 | `unit-20 v3 06 재검증 완료(CONDITIONAL PASS, DEF-020c-01 처리 결정 대기)` |
+| `decisions.md` | DEC-052 | 결과 | `DEF-020b-01 종결(Closed), 대기열 20건 정렬 완료 — 06 3차 재검증 12절` |
+| `decisions.md` | DEC-053 | 결과 | `즉시 삭제 이행 검증 완료(503·예외 시 행/업로드 0). 단 BaseException·프로세스 사망·폐기 실패 시 EXPIRED 예약 행 잔존(DEF-020c-01) — 처리 방식 결정 필요(5단계 폐기 보장 강화 및/또는 unit-22 스윕에 stale EXPIRED 정리, 또는 위험 수용)` |
+| `decisions.md` | 신규(제안) | DEF-020c-01 처리 | 재작업 vs 위험 수용 — 결정 요청 |
+| `03-system-design.md` | §4-4 `/convert` (3) | 정정 제안(OBS-9) | "PENDING 행 생성" → "EXPIRED 예약 저장 후 `submit_job` 성공 시 PENDING 승격(DEC-052/053)" (03 소관, 06은 수정하지 않음) |
+| `unit-20-note.md` | 참고 | R-8-4 | AC-5 변경분·AC-18이 이번 06 3차에서 검증 완료 |

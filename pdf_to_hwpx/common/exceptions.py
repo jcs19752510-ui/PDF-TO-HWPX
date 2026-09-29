@@ -14,7 +14,8 @@ orchestrator 최상위 ``except Exception``에서 ``INTERNAL_ERROR``로 변환�
     |   `-- EmptyPdfError
     +-- HwpxWriteError
     |   +-- ContainerBuildError
-    |   `-- OutputPathError
+    |   +-- OutputPathError
+    |   `-- HwpxSchemaError
     `-- OcrEngineError
         `-- TesseractNotFoundError
 """
@@ -71,6 +72,12 @@ class OutputPathError(HwpxWriteError):
 
     사용자 메시지(04 §2 G-4)는 두 경우가 서로 달라, orchestrator(unit-8)가
     상황에 맞는 문구를 선택해 매핑한다.
+    """
+
+
+class HwpxSchemaError(HwpxWriteError):
+    """커널 요소 팩토리(hwpx_kernel.schema/section/styles)에 넘긴 인자가 관찰된 구조
+    규칙을 어기는 경우(예: 표 셀이 그리드를 겹치거나 덮지 못함). 호출자 버그를 뜻한다.
     """
 
 

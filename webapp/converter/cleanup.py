@@ -31,6 +31,13 @@ from .models import ConversionJob
 logger = logging.getLogger(__name__)
 
 TTL_MINUTES = 60
+# 업로드 뷰의 "예약 EXPIRED 행"(제출 전 임시 저장, views._save_and_submit)이 프로세스 사망 등으로
+# 승격·폐기되지 못한 고아를 정리하는 안전망(DEF-020c-01, DEC-063)의 유예 시간.
+# 정상 예약 구간은 _submit_lock 안의 save~승격 UPDATE(수 ms~수 초; unit-20 TC-270/271 실측
+# 1~3초 인위 지연)뿐이라 60분이 넘는 EXPIRED+purged_at NULL 행은 정상 흐름에서 존재할 수 없다.
+# 그래도 시계 오차·DB 지연을 감안해 TTL 위에 10분을 더 얹어(70분) 진행 중 예약을 조기 삭제하지 않는다.
+# job_id는 클라이언트에 전달된 적이 없으므로 "60분 후 자동 삭제" 약속과 충돌하지 않는다.
+ORPHAN_RESERVATION_GRACE_MINUTES = 10
 SWEEP_COOLDOWN_SECONDS = 5 * 60
 SWEEP_BATCH_LIMIT = 20
 
@@ -65,12 +72,17 @@ def run_lazy_sweep_if_due() -> int:
 
 
 def _sweep_expired_jobs() -> int:
-    """`created_at` 기준 60분 경과 + 아직 EXPIRED가 아닌 job을 최대 20건 정리한다.
+    """만료 job을 합계 최대 20건 정리한다.
 
-    DONE/FAILED로 최종 전이된 job과, PENDING/PROCESSING에 60분 넘게 멈춰있는
-    "좀비 job"(03 §5 "프로세스 재시작에 따른 job 유실") 둘 다 정리 대상이다.
+    1) `created_at` 기준 60분 경과 + 아직 EXPIRED가 아닌 job. DONE/FAILED로 최종 전이된 job과,
+       PENDING/PROCESSING에 60분 넘게 멈춰있는 "좀비 job"(03 §5 "프로세스 재시작에 따른 job 유실").
+    2) 남는 배치 여유분으로 "고아 예약 행": EXPIRED + `purged_at` NULL + 생성 후
+       TTL+유예(70분) 경과. 정상 만료 행은 항상 `purged_at`이 채워져 있으므로 재처리되지 않는다(멱등).
+    삭제에 실패한 job은 행을 그대로 두므로 다음 스윕에서 자동 재시도된다.
     """
-    cutoff = timezone.now() - timedelta(minutes=TTL_MINUTES)
+    now = timezone.now()
+    cutoff = now - timedelta(minutes=TTL_MINUTES)
+    orphan_cutoff = now - timedelta(minutes=TTL_MINUTES + ORPHAN_RESERVATION_GRACE_MINUTES)
 
     job_ids: list[uuid.UUID] = list(
         ConversionJob.objects.exclude(status=ConversionJob.Status.EXPIRED)
@@ -78,31 +90,59 @@ def _sweep_expired_jobs() -> int:
         .order_by("created_at")
         .values_list("job_id", flat=True)[:SWEEP_BATCH_LIMIT]
     )
-    if not job_ids:
+    orphan_ids: list[uuid.UUID] = []
+    remaining = SWEEP_BATCH_LIMIT - len(job_ids)
+    if remaining > 0:
+        orphan_ids = list(
+            ConversionJob.objects.filter(
+                status=ConversionJob.Status.EXPIRED,
+                purged_at__isnull=True,
+                created_at__lt=orphan_cutoff,
+            )
+            .order_by("created_at")
+            .values_list("job_id", flat=True)[:remaining]
+        )
+    if not job_ids and not orphan_ids:
         return 0
 
-    succeeded_ids: list[uuid.UUID] = []
+    succeeded_ids = _delete_objects(job_ids)
+    succeeded_orphan_ids = _delete_objects(orphan_ids)
+
+    purged_at = timezone.now()
+    updated = 0
+    if succeeded_ids:
+        updated += ConversionJob.objects.filter(job_id__in=succeeded_ids).update(
+            status=ConversionJob.Status.EXPIRED, purged_at=purged_at
+        )
+    if succeeded_orphan_ids:
+        # 조건부 UPDATE — 그 사이 승격/처리된 행(EXPIRED가 아니거나 이미 purged)은 건드리지 않는다.
+        updated += ConversionJob.objects.filter(
+            job_id__in=succeeded_orphan_ids,
+            status=ConversionJob.Status.EXPIRED,
+            purged_at__isnull=True,
+        ).update(purged_at=purged_at)
+    if updated:
+        logger.info(
+            "TTL 지연 스윕: %d건 정리(EXPIRED 처리, 그중 고아 예약 행 후보 %d건)",
+            updated,
+            len(succeeded_orphan_ids),
+        )
+    return updated
+
+
+def _delete_objects(job_ids: list[uuid.UUID]) -> list[uuid.UUID]:
+    succeeded: list[uuid.UUID] = []
     for job_id in job_ids:
         try:
             storage.delete_job_objects(job_id)
         except Exception:
             # 한 job의 오브젝트 삭제 실패가 나머지 job 정리를 막아서는 안 된다
             # (벌크헤드, 03 §5 원칙과 동일한 정신) — 로그를 남기고 이 job만 이번
-            # 배치에서 제외한다(status는 그대로 두어 다음 스윕에서 삭제 재시도).
+            # 배치에서 제외한다(행은 그대로 두어 다음 스윕에서 삭제 재시도).
             logger.exception(
                 "TTL 스윕: job %s 오브젝트 삭제 실패, 이번 배치에서 제외합니다(다음 스윕에서 재시도).",
                 job_id,
             )
             continue
-        succeeded_ids.append(job_id)
-
-    if not succeeded_ids:
-        return 0
-
-    purged_at = timezone.now()
-    updated = ConversionJob.objects.filter(job_id__in=succeeded_ids).update(
-        status=ConversionJob.Status.EXPIRED, purged_at=purged_at
-    )
-    if updated:
-        logger.info("TTL 지연 스윕: %d건 정리(EXPIRED 처리)", updated)
-    return updated
+        succeeded.append(job_id)
+    return succeeded

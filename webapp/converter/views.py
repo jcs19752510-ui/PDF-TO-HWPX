@@ -113,8 +113,10 @@ def convert(request):
             status=500,
         )
 
+    # 예약 행을 업로드 저장보다 먼저 EXPIRED로 만든다 — 카운트 대상이 아니라 대기열 판정에
+    # 영향이 없고, 이후 어디서 죽어도 TTL 스윕이 찾을 수 있는 행이 남는다(DEF-020c-01).
     job = ConversionJob(
-        status=ConversionJob.Status.PENDING,
+        status=ConversionJob.Status.EXPIRED,
         enable_ocr=enable_ocr,
         ocr_lang=ocr_lang,
         input_object_key=storage.upload_object_key(uuid.uuid4()),
@@ -124,55 +126,73 @@ def convert(request):
     # 실제 job_id 기준 키로 다시 맞춘다.
     job.input_object_key = storage.upload_object_key(job.job_id)
 
-    storage.save_uploaded_file(job.job_id, uploaded_file)
-
+    # 제출 성공(워커 소유)이 되기 전에는 어떤 경로로 빠져나가도(BaseException 포함)
+    # 예약 행과 업로드를 폐기한다. 프로세스 사망은 여기서 못 막으므로 스윕이 안전망이다.
+    handed_off = _HandOff()
     try:
-        _save_and_submit(job, submit_job)
+        job.save()
+        storage.save_uploaded_file(job.job_id, uploaded_file)
+        _submit_and_promote(job, submit_job, handed_off)
     except QueueFullError:
-        # 큐 포화 — 방금 저장한 job 행·업로드는 즉시 폐기한다. PENDING으로 남겨두면
+        # 큐 포화 — 예약 행·업로드는 finally에서 폐기된다. PENDING으로 남겨두면
         # 실행되지도 않는 행이 대기열 카운트를 최대 60분(TTL) 차지해 포화가 스스로 길어진다.
-        _discard_job(job.job_id)
         return JsonResponse(
             {"error": "지금은 이용자가 많아 서버가 바쁩니다. 1~2분 후 다시 시도해주세요."},
             status=503,
         )
-    except Exception:
-        _discard_job(job.job_id)
-        raise
+    finally:
+        if not handed_off.done:
+            _discard_job(job.job_id)
 
     return JsonResponse({"job_id": str(job.job_id)}, status=202)
 
 
-def _save_and_submit(job, submit_job):
-    """job 행 저장 → 큐 제출 → PENDING 승격. `_submit_lock` 안에서만 수행한다.
+class _HandOff:
+    """`submit_job`이 성공해 job이 워커 소유가 됐는지 표시한다(이후엔 폐기 금지)."""
+
+    done = False
+
+
+def _submit_and_promote(job, submit_job, handed_off):
+    """큐 제출 → PENDING 승격. `_submit_lock` 안에서만 수행한다.
 
     `submit_job`은 PENDING+PROCESSING 행 수가 20 이상이면 거절하는데(03 §5, 20건까지
     허용) 새 job이 이미 PENDING으로 저장돼 있으면 스스로를 세어 실효 용량이 19가 된다.
-    그래서 제출 전에는 카운트 대상이 아닌 EXPIRED로 저장해 두고, 제출 성공 뒤에만
+    그래서 제출 전에는 카운트 대상이 아닌 EXPIRED 예약 행으로 두고, 제출 성공 뒤에만
     PENDING으로 올린다. 승격은 조건부 UPDATE라 워커가 그 사이 PROCESSING/DONE으로
     바꿨다면 덮어쓰지 않는다. EXPIRED는 폴링·다운로드 뷰에서 404이지만 job_id를
     클라이언트가 아직 받기 전이라 노출되지 않는다.
     """
     with _submit_lock:
-        job.status = ConversionJob.Status.EXPIRED
-        job.save()
         submit_job(job.job_id)
-        try:
-            ConversionJob.objects.filter(
-                job_id=job.job_id, status=ConversionJob.Status.EXPIRED
-            ).update(status=ConversionJob.Status.PENDING)
-        except Exception:
-            # 이미 워커에 제출됐으므로 폐기하지 않는다(워커가 곧 PROCESSING으로 바꾼다).
-            logger.exception("job PENDING 승격 실패(job_id=%s)", job.job_id)
+        handed_off.done = True
+        # 승격 UPDATE가 일시 오류로 실패해도 한 번 재시도한다. 끝내 실패하면 워커가
+        # 시작하면서 PROCESSING으로 덮어써 복구되므로(그 전 폴링만 404) 폐기하지 않는다.
+        for attempt in (1, 2):
+            try:
+                ConversionJob.objects.filter(
+                    job_id=job.job_id, status=ConversionJob.Status.EXPIRED
+                ).update(status=ConversionJob.Status.PENDING)
+                break
+            except Exception:
+                logger.exception("job PENDING 승격 실패(job_id=%s, 시도 %d/2)", job.job_id, attempt)
 
 
 def _discard_job(job_id):
-    """제출에 실패한 job의 행과 업로드 오브젝트를 정리한다(TTL 스윕은 EXPIRED 행을 건너뛴다)."""
+    """제출되지 못한 job의 업로드 오브젝트와 예약 행을 정리한다. 예외를 밖으로 내지 않는다.
+
+    오브젝트 삭제가 실패하면 행을 남긴다: EXPIRED + purged_at 없음 행은 TTL 스윕(unit-22)이
+    찾아 재시도하는 단서이기 때문이다. 행 삭제가 실패해도 마찬가지로 스윕이 회수한다.
+    """
     try:
         storage.delete_job_objects(job_id)
     except Exception:
-        logger.exception("제출 실패 job의 업로드 삭제 실패(job_id=%s)", job_id)
-    ConversionJob.objects.filter(job_id=job_id).delete()
+        logger.exception("제출 실패 job의 업로드 삭제 실패, 예약 행을 남겨 스윕에 맡김(job_id=%s)", job_id)
+        return
+    try:
+        ConversionJob.objects.filter(job_id=job_id).delete()
+    except Exception:
+        logger.exception("제출 실패 job의 예약 행 삭제 실패, 스윕에 맡김(job_id=%s)", job_id)
 
 
 @require_GET

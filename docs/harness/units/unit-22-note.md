@@ -110,3 +110,78 @@ def index(request):
 decisions.md에 남길 새로운 규칙 A 질문은 없음(트리거 지점 선택은 프롬프트가 명시적으로 자체 판단을 허용한 가역적 구현 세부사항).
 
 **오케스트레이터 액션 아이템(§2 재정리)**: `webapp/converter/views.py`의 `index(request)` 함수 상단에 `from . import cleanup` import 추가 + 함수 본문 첫 줄에 `cleanup.run_lazy_sweep_if_due()` 호출 추가. 이 변경 없이는 REQ-028의 "지연 스윕" 계층이 실제로는 트리거되지 않는다(코드는 존재하지만 아무도 호출하지 않는 상태) — 06단계 착수 전 반드시 반영 확인.
+
+
+---
+
+## R. 재작업 이력 v2 — DEF-020c-01 안전망 (DEC-063, 규칙 F, 2026-09-29)
+
+### R-1. 배경
+unit-20의 업로드 뷰가 새 job을 `EXPIRED`로 예약 저장한 뒤 submit 성공 시 `PENDING`으로 승격한다(DEC-052/053). `os._exit`·`BaseException`·폐기 실패 등으로 정리되지 못한 예약 행(EXPIRED, `purged_at` NULL)과 업로드 PDF를 기존 스윕이 `exclude(status=EXPIRED)`로 건너뛰어 영구 잔존했다(unit-20-test.md 12절 TC-280/282/PD-1).
+
+### R-2. 변경 (`webapp/converter/cleanup.py` 만)
+- 스윕 대상에 "고아 예약 행" 추가: `status=EXPIRED AND purged_at IS NULL AND created_at < now - (TTL_MINUTES 60 + ORPHAN_RESERVATION_GRACE_MINUTES 10)` = 생성 후 70분 경과. 기존 대상(60분 경과 비-EXPIRED)이 먼저, 배치 합계 상한 20(`SWEEP_BATCH_LIMIT`)의 남는 여유분으로 처리.
+- 정리 = `storage.delete_job_objects()`(업로드·결과 키, 존재하지 않아도 무오류) + `purged_at` 기록. 행은 정상 만료 행과 동일하게 EXPIRED+`purged_at` 상태로 남긴다. 고아용 UPDATE는 조건부(`status=EXPIRED AND purged_at IS NULL`)라 조회 후 승격/처리된 행은 건드리지 않는다.
+- 삭제 루프를 `_delete_objects()`로 추출(동작 동일). 삭제 실패 job은 행을 그대로 두므로 다음 스윕에서 자동 재시도.
+- 정상 만료 행은 항상 `purged_at`이 있어(스윕 update, 다운로드 `_finalize`) 재처리되지 않는다(멱등).
+
+### R-3. 유예 시간 근거
+- 예약 행이 존재하는 정상 구간은 `_submit_lock` 안의 `job.save()`~승격 UPDATE뿐이다(unit-20-test 12-4 (다): 정상 시 수 ms~수십 ms, 락으로 직렬화되어 동시에 최대 1건). 인위적으로 submit을 1초·3초 지연시킨 실측(TC-270/271)에서도 초 단위. 그러므로 60분을 넘긴 EXPIRED+purged_at NULL은 정상 흐름에서 존재할 수 없다.
+- 그럼에도 기준을 "60분 + 10분"으로 보수적으로 잡았다(시계 오차, Neon 지연, gunicorn worker 타임아웃 등 여유). 실측 최대 수 초 대비 약 2백 배 이상.
+- 60분 약속과의 충돌 없음: 예약 job_id는 클라이언트에 전달된 적 없어 사용자가 약속을 인지하는 job이 아니다. 잔존 최대 시간은 70분 + 스윕 쿨다운 5분 + 트리거(GET /) 빈도.
+- **주의(질문 목록 Q-1)**: 계약의 "뷰의 예약 관련 상수 60분"은 views.py에 존재하지 않는다(60분은 주석에만 있음). 그래서 cleanup.TTL_MINUTES(60)를 기준으로 삼았다.
+
+### R-4. 락/빈도/부하/다중 프로세스
+- `run_lazy_sweep_if_due` 쿨다운(5분, 프로세스 전역)·락 구조 무변경. 쿼리는 스윕 시 최대 2회(기존 1 + 고아 1, 인덱스 `(status, created_at)` 사용, LIMIT 20). 일반 대상이 20건을 채우면 고아 쿼리는 생략된다.
+- 다중 프로세스: 동일 행을 동시에 처리해도 삭제는 멱등, 고아 UPDATE는 조건부라 안전. 03 §2-1 단일 워커 전제.
+- 일반 만료 대상이 매 배치 20건을 계속 채우면 고아 처리가 이월될 수 있다(기아 가능성은 트래픽이 20건/5분을 상시 초과할 때뿐, 무료 플랜 규모에서 비현실적; 스윕은 배치 반복으로 결국 소진).
+- 로그는 job_id(UUID)만 기록. 스토리지 키는 UUID 기반이라 파일명(원본 이름)이 로그·예외 메시지에 들어가지 않는다.
+
+### R-5. 실측 (수정 전 HEAD vs 수정 후, 별도 SQLite/MEDIA_ROOT `.harness-tmp/_05_unit22b`, 확인 후 삭제)
+| 시나리오 | 수정 전 | 수정 후 |
+|---|---|---|
+| EXPIRED+purged NULL, 200분 경과 + 업로드 파일 | 잔존(FAIL) | 파일 삭제 + purged_at 기록 |
+| 방금 만든(1분) 예약 행 | 보존 | 보존 |
+| 65분 경과(유예 구간) 예약 행 | 보존 | 보존 |
+| 이미 purged된 정상 EXPIRED 행 | 무변경 | 무변경 |
+| 90분 DONE(기존 동작) | 정리 | 정리 |
+| 재스윕(쿨다운 해제) | - | 0건, purged_at 불변(멱등) |
+| `delete_job_objects` OSError | - | 0건, 행 purged_at NULL·파일 잔존 -> 다음 스윕 재시도 성공 |
+| 일반 15 + 고아 15 | - | 합계 20건 처리, 고아 10건 이월 |
+| 삭제 중 PENDING으로 승격된 행 | - | purged_at 미기록(조건부 UPDATE) |
+결과: 수정 전 FAIL 2(고아 2항목)만, 수정 후 FAILS 0. 검증 스크립트는 저장소에 남기지 않음(unit-22 관례).
+
+### R-6. 게이트
+- 게이트 1: 저장소에 lint/type-check 설정 없음(기존 note §5와 동일). `py_compile` 통과, 실행 검증에서 import 성공.
+- 게이트 2: [x] 명세(계약) 일치 [x] 예외 삼킴 없음(logger.exception) [x] 시스템 경계 입력 없음(내부 DB) [x] 시크릿 없음 [x] 신규 의존성 없음 [x] 범위 외 변경 없음(cleanup.py만).
+- 06 테스트는 실행하지 않음. 규칙 B 검증 로그: `docs/harness/verify-log_unit-22-note.md`.
+
+### R-7. 신규 인수 조건
+- AC-8: EXPIRED+`purged_at` NULL+생성 71분 이상 경과 행은 스윕 후 업로드·결과 오브젝트가 삭제되고 `purged_at`이 채워진다.
+- AC-9: 같은 조건이지만 생성 60분 미만·69분 등 70분 미만 행은 변화 없다.
+- AC-10: `purged_at`이 이미 있는 EXPIRED 행은 스윕 전후 `purged_at` 값이 동일하다.
+- AC-11: 고아 삭제 실패 시 행이 `purged_at` NULL로 남고 다음 스윕에서 재시도된다.
+- AC-12: 배치 합계 상한 20 유지. 속도 트랙: L3.
+
+### R-8. 미결 질문 / 관찰
+- Q-1: 뷰에 예약 TTL 상수가 없음(위). 필요하면 공용 상수화는 unit-20 쪽 결정.
+- OBS: 스윕 트리거가 현재 `GET /`(views.index)뿐이라 트래픽이 없으면 실행되지 않는다(기존 설계, 무변경). R2 라이프사이클 백스톱은 여전히 유효.
+
+### R-9. 공유 문서 갱신 요청
+- DEF-020c-01: 상태 -> 5단계 안전망 수정 완료(unit-22 R절), 06 재검증 대기 (DEC-063 근거).
+- REQ-028 / 구현 상태: "고아 예약 EXPIRED 행 정리 추가(unit-22 재작업 v2)" 덧붙임.
+- decisions.md: DEC-064(제안) 고아 예약 행 유예 = TTL 60분 + 10분, 정리 시 행 유지+purged_at 기록.
+
+### R-10. git status 원문
+```
+ M docs/harness/03-system-design.md
+ M docs/harness/decisions.md
+ M docs/harness/traceability.md
+ M docs/harness/units/unit-20-test.md
+ M docs/harness/verify-log_03-system-design.md
+ M docs/harness/verify-log_unit-20-test.md
+ M webapp/converter/cleanup.py      <- 이 작업
+ M webapp/converter/views.py        <- 다른 에이전트(unit-20)
+?? docs/harness/analysis/
+(이 작업이 추가로 수정한 파일: cleanup.py, unit-22-note.md, verify-log_unit-22-note.md(신규). 다른 항목은 동시 작업/기존 변경.)
+```
