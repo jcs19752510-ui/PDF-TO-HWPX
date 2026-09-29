@@ -20,3 +20,11 @@ whitenoise==6.8.2
 
 # 로컬 개발 편의(.env 로딩)
 python-dotenv==1.0.1
+
+# 이미지 디컴프레션 상한(PIL.Image.MAX_IMAGE_PIXELS, REQ-029) 설정을 위해
+# config/settings/base.py가 직접 import한다(unit-24). pdf_to_hwpx 패키지도
+# 이미 Pillow에 의존하므로(pyproject.toml) editable install 시 전이적으로도
+# 설치되지만, webapp이 이 패키지를 직접 쓰므로 명시적으로 선언한다(오케스트레이터,
+# unit-25가 병렬 웨이브 중 실측으로 발견해 보고한 암묵적 의존성 갭 — DEC-039와
+# 동일한 성격의 공유자원 정정).
+Pillow==11.3.0

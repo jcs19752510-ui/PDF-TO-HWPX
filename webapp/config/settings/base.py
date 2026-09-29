@@ -5,17 +5,22 @@ Env-specific overrides live in dev.py / production.py
 (03-system-design.md §1-3 unit-19 확정 파일범위, AI-AUTO-WORK의 base/dev/
 production 분리 관례를 그대로 재사용, DEC-020).
 
-주의: `legal`(unit-25)/`converter`의 뷰 계층(unit-20)/`core`의 net_guard(unit-9)
-등 아직 착수되지 않은 unit의 파일은 이 시점에 import/INSTALLED_APPS에
-추가하지 않는다 — 존재하지 않는 모듈을 참조하면 `manage.py runserver` 자체가
-깨지기 때문이다(오케스트레이터 지시사항, unit-19의 최우선 목표: 로컬 즉시
-기동 가능 상태).
+주의: `converter`의 뷰 계층(unit-20)/`core`의 net_guard(unit-9) 등 아직
+착수되지 않은 unit의 파일은 이 시점에 import/INSTALLED_APPS에 추가하지
+않는다 — 존재하지 않는 모듈을 참조하면 `manage.py runserver` 자체가 깨지기
+때문이다(오케스트레이터 지시사항, unit-19의 최우선 목표: 로컬 즉시 기동
+가능 상태). `legal`(unit-25)은 앱 패키지가 실제로 만들어졌으므로
+INSTALLED_APPS에 추가되어 있다(unit-19-note.md §2-2가 예정해둔 변경, unit-25가
+직접 반영).
 """
 
 import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from PIL import Image
+
+from converter.limits import MAX_IMAGE_PIXELS
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
 BASE_DIR = PROJECT_DIR
@@ -25,12 +30,19 @@ BASE_DIR = PROJECT_DIR
 # 재사용, 03 §2-1).
 load_dotenv(BASE_DIR / ".env")
 
+# 이미지 디컴프레션 폭탄 방지(03 §5, unit-24) — 프로세스 전역 클래스 속성이라
+# 진입점(settings 모듈, manage.py/wsgi.py가 모두 거쳐가는 지점)에서 한 번만
+# 설정하면 Image.open()/Image.frombytes() 경로에 자동 적용된다.
+# `pdf_to_hwpx/pdf_reader/image_extractor.py` 자체는 수정하지 않는다.
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
 
 # Application definition
 
 INSTALLED_APPS = [
     "core",
     "converter",
+    "legal",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -42,7 +54,11 @@ INSTALLED_APPS = [
 # XForwardedForMiddleware(config/middleware.py)는 production.py에서만
 # 맨 앞에 prepend된다(03 §6-4) — dev 로컬 실행에는 Render 엣지라는 전제가
 # 없으므로 base에는 등록하지 않는다.
+# ContentLengthLimitMiddleware(core/middleware.py, unit-24)는 SecurityMiddleware
+# 보다도 앞단(리스트 최상단)에 둔다(03 §6-4) — 본문을 실제로 읽기 전에
+# Content-Length 헤더만으로 50MB 초과 요청을 413으로 즉시 거절해야 하기 때문이다.
 MIDDLEWARE = [
+    "core.middleware.ContentLengthLimitMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",

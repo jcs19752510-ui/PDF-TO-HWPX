@@ -11,12 +11,16 @@ import os
 
 from django.core.wsgi import get_wsgi_application
 
+from core.net_guard import install as install_net_guard
+
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.dev")
 
-# unit-9(net_guard)가 완료되면 여기서 net_guard.install()을 호출해 아웃바운드
-# 화이트리스트(Neon/R2 호스트만 허용)를 기동 시 1회 적용한다(03 §6-3, §1-3
-# unit-9 행 "진입점(config/wsgi.py) 1줄 호출"). unit-9가 아직 착수되지
-# 않아(Not Started) 존재하지 않는 모듈을 import하면 기동 자체가 깨지므로,
-# 이번 unit(19)에서는 자리만 비워두고 실제 호출 코드는 추가하지 않는다.
+# 아웃바운드 화이트리스트(Neon/R2 호스트만 허용, 03 §6-3, DEC-033)를 기동 시
+# 1회 적용한다. production에서만 강제하고 dev는 비활성화한다(unit-19가 확립한
+# dev/production 분리 패턴 재사용) — settings 모듈이 아직 완전히 로드되지
+# 않은 이 시점에도 판별 가능하도록 DJANGO_SETTINGS_MODULE 값으로 분기한다.
+install_net_guard(
+    enforce=os.environ["DJANGO_SETTINGS_MODULE"].endswith(".production")
+)
 
 application = get_wsgi_application()
