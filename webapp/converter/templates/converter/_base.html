@@ -1,0 +1,138 @@
+{% load static %}<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+{# WCAG 1.4.4 — pinch-zoom을 막는 maximum-scale 제한을 두지 않는다(04 §6-2). #}
+<title>{% block title %}PDF→HWPX 변환{% endblock %}</title>
+<style>
+  /* 색상/타이포 토큰: 04-ux-design.md §3-1/§3-2를 그대로 승계(값 변경 없음). */
+  :root {
+    --color-bg-base: #FFFFFF;
+    --color-bg-subtle: #F5F6F8;
+    --color-text-primary: #1A1A1A;
+    --color-text-secondary: #5A5F66;
+    --color-primary: #1F6FEB;
+    --color-primary-contrast-text: #FFFFFF;
+    --color-success: #1E7B34;
+    --color-warning-text: #8A5300;
+    --color-warning-bg: #FFF7E6;
+    --color-danger-text: #B91C1C;
+    --color-danger-bg: #FDECEC;
+    --color-focus-ring: #1F6FEB;
+    --color-border: #D0D3D9;
+    --font-heading: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font-family: var(--font-body);
+    font-size: 1rem;
+    line-height: 1.6;
+    color: var(--color-text-primary);
+    background: var(--color-bg-base);
+  }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  .skip-link:focus {
+    position: static; width: auto; height: auto; margin: 0.5rem;
+    padding: 0.5rem 1rem; background: var(--color-primary);
+    color: var(--color-primary-contrast-text); clip: auto; overflow: visible;
+    display: inline-block; border-radius: 4px;
+  }
+  .container { max-width: 640px; margin: 0 auto; padding: 0 1rem; }
+  @media (min-width: 768px) { .container { padding: 0 1.5rem; } }
+  header .container { padding-top: 1rem; padding-bottom: 0.5rem; }
+  .service-name {
+    font-family: var(--font-heading); font-weight: 700; font-size: 1.25rem;
+  }
+  .banner {
+    background: var(--color-bg-subtle); color: var(--color-text-secondary);
+    padding: 0.75rem 0; font-size: 0.875rem;
+  }
+  .banner a, footer a, .link-button { color: var(--color-primary); }
+  main { display: block; padding: 1rem 0 2rem; }
+  footer {
+    border-top: 1px solid var(--color-border);
+    font-size: 0.875rem; color: var(--color-text-secondary);
+    padding: 1rem 0 2rem;
+  }
+  footer a { margin-right: 1rem; }
+  footer p { margin: 0.75rem 0 0; }
+  fieldset { border: 1px solid var(--color-border); border-radius: 6px; padding: 0.75rem; margin: 0; }
+  legend { font-weight: 700; padding: 0 0.25rem; }
+  label { display: inline-block; margin: 0.25rem 0; }
+  .field { margin-bottom: 1rem; }
+  button, .btn {
+    min-height: 44px; min-width: 44px; font-family: inherit; font-size: 1rem;
+    border-radius: 6px; cursor: pointer; padding: 0.75rem 1.5rem;
+  }
+  button:focus-visible, a:focus-visible, input:focus-visible {
+    outline: 2px solid var(--color-focus-ring); outline-offset: 2px;
+  }
+  .btn-primary {
+    background: var(--color-primary); color: var(--color-primary-contrast-text);
+    border: none;
+  }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary {
+    background: transparent; border: 1px solid var(--color-border);
+    color: var(--color-text-primary);
+  }
+  .panel { display: none; }
+  .panel.is-active { display: block; }
+  .inline-banner {
+    padding: 0.75rem 1rem; border-radius: 6px; margin-top: 0.75rem; font-size: 0.9rem;
+  }
+  .inline-banner.danger { background: var(--color-danger-bg); color: var(--color-danger-text); }
+  .inline-banner.warning { background: var(--color-warning-bg); color: var(--color-warning-text); }
+  .inline-banner.info { background: var(--color-bg-subtle); color: var(--color-text-secondary); }
+  .inline-banner[hidden] { display: none; }
+  .badge { font-family: var(--font-heading); font-size: 1.25rem; }
+  .badge.success { color: var(--color-success); }
+  .badge.warning { color: var(--color-warning-text); }
+  .badge.danger { color: var(--color-danger-text); }
+  progress { width: 100%; height: 12px; accent-color: var(--color-primary); }
+  ul.issue-list { list-style: none; padding: 0; margin: 1rem 0; }
+  ul.issue-list li { padding: 0.5rem 0; border-bottom: 1px solid var(--color-border); }
+  .caption { font-size: 0.875rem; color: var(--color-text-secondary); }
+  .file-info { margin: 0.5rem 0; }
+  .persistent-banner { }
+</style>
+{% block extra_head %}{% endblock %}
+</head>
+<body>
+<a class="skip-link sr-only" href="#main">본문으로 바로가기</a>
+<header>
+  <div class="container">
+    <span class="service-name">PDF→HWPX 변환</span>
+  </div>
+  <div class="banner persistent-banner" role="status">
+    <div class="container">
+      업로드 파일과 변환 결과는 60분 후 자동 삭제되며, 다운로드 완료 시 즉시 삭제됩니다.
+      <a href="/privacy/">개인정보처리방침 자세히 보기</a>
+    </div>
+  </div>
+</header>
+<main id="main" tabindex="-1">
+  <div class="container">
+    {% block content %}{% endblock %}
+  </div>
+</main>
+<footer>
+  <div class="container">
+    <a href="/privacy/">개인정보처리방침</a>
+    <!-- unit-18이 실제 SPONSOR_URL로 이 링크를 확정한다(03 §1-3 unit-18 행,
+         REQ-025) — 지금은 자리표시자 href만 둔다. -->
+    <a href="#" target="_blank" rel="noopener noreferrer">후원하기</a>
+    <a href="https://github.com/jcs19752510-ui/PDF-TO-HWPX" target="_blank" rel="noopener noreferrer">GitHub 저장소</a>
+    <p>MIT License · HWPX(OWPML/KS X 6101) 기반</p>
+  </div>
+</footer>
+<script src="{% static 'converter/app.js' %}" defer></script>
+</body>
+</html>

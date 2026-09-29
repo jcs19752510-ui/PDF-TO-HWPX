@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+{% comment %}
+04-ux-design.md W-2(190~201행), 03-system-design.md §2-3/§6-2 확정 문구를 그대로 반영한
+100% 정적 콘텐츠 페이지. DB/API 조회가 없으므로 이 템플릿에는 에러/빈/로딩 상태가 없다.
+{% endcomment %}
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>개인정보처리방침 | PDF-TO-HWPX</title>
+  <style>
+    :root {
+      --color-bg-base: #FFFFFF;
+      --color-bg-subtle: #F5F6F8;
+      --color-text-primary: #1A1A1A;
+      --color-text-secondary: #5A5F66;
+      --color-primary: #1F6FEB;
+      --color-border: #D0D3D9;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Malgun Gothic", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+      font-size: 1rem;
+      color: var(--color-text-primary);
+      background: var(--color-bg-base);
+      margin: 0;
+      padding: 24px 16px;
+    }
+    main {
+      max-width: 640px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+    }
+    h2 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      margin-top: 2rem;
+    }
+    p, li {
+      line-height: 1.6;
+    }
+    .caption {
+      font-size: 0.875rem;
+      color: var(--color-text-secondary);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.5rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5rem;
+      border: 1px solid var(--color-border);
+      vertical-align: top;
+    }
+    .placeholder {
+      color: var(--color-text-secondary);
+      font-style: italic;
+    }
+    a {
+      color: var(--color-primary);
+    }
+    .trust-banner {
+      background: var(--color-bg-subtle);
+      border-radius: 4px;
+      padding: 0.75rem 1rem;
+      margin-top: 2rem;
+      font-size: 0.875rem;
+      color: var(--color-text-secondary);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>개인정보처리방침</h1>
+    <p class="caption">이 서비스는 회원가입 없이 익명으로 이용할 수 있으며, 아래 내용은 서버가 업로드된 문서를 어떻게 처리하는지 투명하게 안내합니다.</p>
+
+    <h2>처리 목적</h2>
+    <p>PDF&rarr;HWPX 변환 전용. 업로드된 문서는 오직 이 변환 기능을 수행하는 데에만 사용됩니다.</p>
+
+    <h2>수집 항목</h2>
+    <p>업로드된 PDF 파일 내용 자체만 처리합니다. 파일명이나 이용자를 식별할 수 있는 정보(이름, 이메일, 계정 등)는 수집하지 않습니다.</p>
+
+    <h2>보관기간</h2>
+    <ul>
+      <li>업로드 원본 및 변환된 HWPX 파일: 업로드 시점으로부터 최대 60분간 보관되며, 다운로드가 완료되면 즉시 삭제됩니다.</li>
+      <li>운영 통계 목적으로 남는 처리 기록(파일명 등 식별정보는 포함하지 않는 익명 데이터)은 30일 후 파기됩니다. 이 30일은 위 60분(문서 보관기간)과는 별개의 기간입니다.</li>
+    </ul>
+
+    <h2>국외이전에 관한 사항</h2>
+    <p>이 서비스는 대한민국 내 리전을 제공하지 않는 해외 인프라(서버 호스팅, 데이터베이스, 오브젝트 스토리지)를 사용하므로, 업로드된 문서가 국외로 이전되어 처리됩니다. 개인정보보호법 제28조의8에 따라 아래 사항을 고지합니다.</p>
+    <table>
+      <tbody>
+        <tr>
+          <th scope="row">이전되는 국가</th>
+          <td class="placeholder">[배포 확정 시 기재 — 예: 싱가포르 등, 최종 확정 리전]</td>
+        </tr>
+        <tr>
+          <th scope="row">이전받는 자</th>
+          <td class="placeholder">[배포 확정 시 기재 — 서버 호스팅사(Render Inc.), 데이터베이스 운영사, Cloudflare Inc.의 정확한 법인명]</td>
+        </tr>
+        <tr>
+          <th scope="row">이전 목적</th>
+          <td>PDF&rarr;HWPX 변환 처리 및 위 보관기간 내 임시 저장</td>
+        </tr>
+        <tr>
+          <th scope="row">보유·이용기간</th>
+          <td>위 "보관기간"과 동일 — 업로드/변환 파일 최대 60분(다운로드 시 즉시 삭제)</td>
+        </tr>
+        <tr>
+          <th scope="row">이전 거부 방법</th>
+          <td>이 서비스는 해외 인프라에서의 처리를 전제로 동작하므로 국외이전 자체를 거부할 수 있는 별도 수단을 제공하지 않습니다. 국외이전에 동의하지 않으시는 경우 이 서비스를 이용하실 수 없습니다.</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h2>OCR 처리에 관한 안내</h2>
+    <p>문서 변환 과정에서 OCR(광학 문자 인식)이 수행될 수 있으며, 이 과정에서 주민등록번호 등 고유식별정보가 일시적으로 인식될 수 있습니다. 이렇게 인식된 정보 역시 위 보관기간이 지나면 자동으로 삭제됩니다.</p>
+
+    <div class="trust-banner">
+      이 서비스는 HTTPS로 암호화되어 전송됩니다(브라우저 주소창의 자물쇠 아이콘으로 확인 가능).
+    </div>
+
+    <h2>문의</h2>
+    <p>이 서비스는 익명으로 운영되어 별도의 이메일 문의 창구를 두지 않습니다. 문의 사항은
+      <a href="https://github.com/jcs19752510-ui/PDF-TO-HWPX/issues" target="_blank" rel="noopener noreferrer">GitHub Issues</a>
+      를 통해 남겨 주세요.
+    </p>
+  </main>
+</body>
+</html>
