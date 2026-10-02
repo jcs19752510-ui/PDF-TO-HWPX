@@ -6,21 +6,23 @@
 각 뷰를 독립 함수로 유지한다(unit-23 레이트리밋 데코레이터를 나중에
 얹기 쉽도록, 오케스트레이터 지시사항).
 
-`converter.executor`(unit-21, 병렬 작업 중)는 이 모듈 로드 시점에는
-아직 존재하지 않을 수 있으므로, `convert()` 뷰 내부에서만 지연 import
-한다 — 이렇게 하면 executor.py가 아직 없어도 `GET /`(index)와 나머지
-라우트는 정상 동작한다(unit-20-note.md 참고).
+`converter.executor`는 `convert()` 뷰 내부에서만 지연 import 한다. 이 모듈이
+`pdf_to_hwpx` 변환 라이브러리와 스레드풀까지 끌어오므로, 최상단 import로
+바꾸면 의존성 누락 시 URLconf 로드 자체가 실패해 `GET /`·`/healthz` 등 무관한
+라우트까지 전부 죽는다. import 실패는 503으로 위장하지 않고 500 + 전체 스택
+로그로 드러낸다(unit-20-note.md 재작업 v2).
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 
 from django.http import FileResponse, JsonResponse
 from django.shortcuts import render
 from django.utils import timezone
-from django.views.decorators.http import require_http_methods
+from django.views.decorators.http import require_GET, require_http_methods
 
 from . import cleanup, limits, ratelimit, storage
 from .models import ConversionJob
@@ -29,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 # REQ-014/03 §3-2 — OCR 언어 체크박스는 한국어/영어 2개만 제공(04-ux-design.md §2 Panel A).
 _OCR_LANG_FIELDS = (("kor", "ocr_lang_kor"), ("eng", "ocr_lang_eng"))
+
+# 대기열 용량 판정(`executor.submit_job`의 카운트)과 그 직후 PENDING 승격을 한 덩어리로
+# 직렬화한다 — 없으면 동시 요청이 서로의 "예약 행"을 세지 못해 한도를 넘겨 통과한다.
+# 프로세스 1개 전제(03 §2-1 `--workers 1`, ratelimit.py와 동일 전제).
+_submit_lock = threading.Lock()
 
 
 def index(request):
@@ -91,8 +98,25 @@ def convert(request):
             )
         ocr_lang = "+".join(selected_langs)
 
+    # 업로드 저장/job 생성보다 먼저 import한다 — 설치 오류가 나도 고아 업로드
+    # 파일·PENDING job이 남지 않는다.
+    try:
+        from .executor import QueueFullError, submit_job
+    except ImportError:
+        # 재시도로 해결되지 않는 배포/설치 오류다. 503("바쁨")으로 위장하지 않고
+        # 진짜 원인은 전체 스택과 함께 로그에만 남긴다(응답에는 내부 정보 비노출).
+        # Django 기본 500 처리에 맡기지 않는 이유: LOGGING 미설정 + DEBUG=False에서는
+        # ADMINS 메일 외에 스택이 어디에도 출력되지 않는다.
+        logger.exception("converter.executor import 실패 — 배포 의존성 점검 필요")
+        return JsonResponse(
+            {"error": "예상치 못한 문제가 발생했습니다. 같은 문제가 계속되면 GitHub Issue로 알려주세요."},
+            status=500,
+        )
+
+    # 예약 행을 업로드 저장보다 먼저 EXPIRED로 만든다 — 카운트 대상이 아니라 대기열 판정에
+    # 영향이 없고, 이후 어디서 죽어도 TTL 스윕이 찾을 수 있는 행이 남는다(DEF-020c-01).
     job = ConversionJob(
-        status=ConversionJob.Status.PENDING,
+        status=ConversionJob.Status.EXPIRED,
         enable_ocr=enable_ocr,
         ocr_lang=ocr_lang,
         input_object_key=storage.upload_object_key(uuid.uuid4()),
@@ -102,34 +126,76 @@ def convert(request):
     # 실제 job_id 기준 키로 다시 맞춘다.
     job.input_object_key = storage.upload_object_key(job.job_id)
 
-    storage.save_uploaded_file(job.job_id, uploaded_file)
-    job.save()
-
+    # 제출 성공(워커 소유)이 되기 전에는 어떤 경로로 빠져나가도(BaseException 포함)
+    # 예약 행과 업로드를 폐기한다. 프로세스 사망은 여기서 못 막으므로 스윕이 안전망이다.
+    handed_off = _HandOff()
     try:
-        from .executor import QueueFullError, submit_job
-    except ImportError:
-        # unit-21(executor.py)이 아직 병렬 작업 중일 때의 임시 방어 경로.
-        # unit-21 완료 후 재확인 필요(unit-20-note.md 참고) — job은 PENDING으로
-        # 남고, cleanup(unit-22)의 TTL 스윕이 결국 정리한다(DEC-029/§5).
-        logger.error("converter.executor를 아직 사용할 수 없습니다(unit-21 대기 중).")
-        return JsonResponse(
-            {"error": "지금은 이용자가 많아 서버가 바쁩니다. 1~2분 후 다시 시도해주세요."},
-            status=503,
-        )
-
-    try:
-        submit_job(job.job_id)
+        job.save()
+        storage.save_uploaded_file(job.job_id, uploaded_file)
+        _submit_and_promote(job, submit_job, handed_off)
     except QueueFullError:
-        # 큐 포화 — job 행/업로드 파일은 그대로 두고(§5 "장애 대응"), cleanup의
-        # TTL 스윕이 60분 후 정리한다. 재작업을 유도하지 않는다(DEC-029 그대로).
+        # 큐 포화 — 예약 행·업로드는 finally에서 폐기된다. PENDING으로 남겨두면
+        # 실행되지도 않는 행이 대기열 카운트를 최대 60분(TTL) 차지해 포화가 스스로 길어진다.
         return JsonResponse(
             {"error": "지금은 이용자가 많아 서버가 바쁩니다. 1~2분 후 다시 시도해주세요."},
             status=503,
         )
+    finally:
+        if not handed_off.done:
+            _discard_job(job.job_id)
 
     return JsonResponse({"job_id": str(job.job_id)}, status=202)
 
 
+class _HandOff:
+    """`submit_job`이 성공해 job이 워커 소유가 됐는지 표시한다(이후엔 폐기 금지)."""
+
+    done = False
+
+
+def _submit_and_promote(job, submit_job, handed_off):
+    """큐 제출 → PENDING 승격. `_submit_lock` 안에서만 수행한다.
+
+    `submit_job`은 PENDING+PROCESSING 행 수가 20 이상이면 거절하는데(03 §5, 20건까지
+    허용) 새 job이 이미 PENDING으로 저장돼 있으면 스스로를 세어 실효 용량이 19가 된다.
+    그래서 제출 전에는 카운트 대상이 아닌 EXPIRED 예약 행으로 두고, 제출 성공 뒤에만
+    PENDING으로 올린다. 승격은 조건부 UPDATE라 워커가 그 사이 PROCESSING/DONE으로
+    바꿨다면 덮어쓰지 않는다. EXPIRED는 폴링·다운로드 뷰에서 404이지만 job_id를
+    클라이언트가 아직 받기 전이라 노출되지 않는다.
+    """
+    with _submit_lock:
+        submit_job(job.job_id)
+        handed_off.done = True
+        # 승격 UPDATE가 일시 오류로 실패해도 한 번 재시도한다. 끝내 실패하면 워커가
+        # 시작하면서 PROCESSING으로 덮어써 복구되므로(그 전 폴링만 404) 폐기하지 않는다.
+        for attempt in (1, 2):
+            try:
+                ConversionJob.objects.filter(
+                    job_id=job.job_id, status=ConversionJob.Status.EXPIRED
+                ).update(status=ConversionJob.Status.PENDING)
+                break
+            except Exception:
+                logger.exception("job PENDING 승격 실패(job_id=%s, 시도 %d/2)", job.job_id, attempt)
+
+
+def _discard_job(job_id):
+    """제출되지 못한 job의 업로드 오브젝트와 예약 행을 정리한다. 예외를 밖으로 내지 않는다.
+
+    오브젝트 삭제가 실패하면 행을 남긴다: EXPIRED + purged_at 없음 행은 TTL 스윕(unit-22)이
+    찾아 재시도하는 단서이기 때문이다. 행 삭제가 실패해도 마찬가지로 스윕이 회수한다.
+    """
+    try:
+        storage.delete_job_objects(job_id)
+    except Exception:
+        logger.exception("제출 실패 job의 업로드 삭제 실패, 예약 행을 남겨 스윕에 맡김(job_id=%s)", job_id)
+        return
+    try:
+        ConversionJob.objects.filter(job_id=job_id).delete()
+    except Exception:
+        logger.exception("제출 실패 job의 예약 행 삭제 실패, 스윕에 맡김(job_id=%s)", job_id)
+
+
+@require_GET
 def job_status(request, job_id):
     """`GET /api/jobs/<uuid:job_id>/` (03 §4-4) — DB 조회만, 라이브러리 재호출 없음."""
     try:
@@ -186,6 +252,7 @@ class _AutoDeleteFile:
         return getattr(self._fileobj, name)
 
 
+@require_GET
 def download(request, job_id):
     """`GET /download/<uuid:job_id>/` (03 §4-4, DEC-036 프록시 스트리밍)."""
     try:

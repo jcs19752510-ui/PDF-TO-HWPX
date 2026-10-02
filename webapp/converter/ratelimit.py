@@ -18,6 +18,9 @@ executor.py(unit-21)나 views.py를 건드리지 않고도 정확히 반영할 �
 from __future__ import annotations
 
 import json
+import threading
+import time
+import uuid
 from functools import wraps
 
 from django.core.cache import cache
@@ -75,18 +78,83 @@ def is_upload_rate_limited(client_ip: str) -> bool:
     return count > UPLOAD_RATE_LIMIT_MAX_ATTEMPTS
 
 
-def is_concurrent_limit_exceeded(client_ip: str) -> bool:
-    """이 IP가 이미 동시 진행중(PENDING+PROCESSING) job을 2건 갖고 있는지 판정한다."""
-    if not client_ip:
-        return False
+# --- 동시 진행중 한도의 check-then-act 경쟁 방지(DEF-023-01) ---------------
+# 뷰가 끝나기 전에는 job_id가 추적목록에 없어, 조회만으로는 같은 IP의 병렬
+# 요청이 모두 "0건"을 보고 통과한다. 그래서 뷰 호출 **전에** 슬롯을 예약
+# (메모리 dict)하고, 조회→예약을 IP별 락 안에서 원자적으로 수행한다.
+# 락은 캐시/DB 카운트 같은 짧은 연산만 감싸며, 뷰 실행(파일 저장·변환 제출)은
+# 락 밖이다. 한 번에 락 하나만 잡고 중첩하지 않으므로 데드락이 없다.
+# gunicorn --workers 1 --threads 4 단일 프로세스 전제(03 §2-1, DEC-032)에서만
+# 정확하다(LocMemCache와 같은 전제).
+_LOCK_STRIPES = 64
+_locks = tuple(threading.Lock() for _ in range(_LOCK_STRIPES))
+# ip -> {reservation_token: 만료 monotonic 시각}. _lock_for(ip) 보유 중에만 접근.
+_reservations: dict[str, dict[str, float]] = {}
+
+
+def _lock_for(client_ip: str) -> threading.Lock:
+    return _locks[hash(client_ip) % _LOCK_STRIPES]
+
+
+def _active_reservation_count(client_ip: str) -> int:
+    # 뷰가 반환되지 못하고 매달린 경우(finally 미도달)에도 영구 잠금이 되지
+    # 않도록 예약에 TTL 상한을 둔다.
+    slots = _reservations.get(client_ip)
+    if not slots:
+        return 0
+    now = time.monotonic()
+    for token in [t for t, deadline in slots.items() if deadline <= now]:
+        del slots[token]
+    if not slots:
+        del _reservations[client_ip]
+        return 0
+    return len(slots)
+
+
+def _in_progress_job_count(client_ip: str) -> int:
     tracked_job_ids = cache.get(_tracked_jobs_cache_key(client_ip)) or []
     if not tracked_job_ids:
-        return False
-    in_progress_count = ConversionJob.objects.filter(
+        return 0
+    return ConversionJob.objects.filter(
         job_id__in=tracked_job_ids,
         status__in=[ConversionJob.Status.PENDING, ConversionJob.Status.PROCESSING],
     ).count()
-    return in_progress_count >= CONCURRENT_JOB_LIMIT
+
+
+def is_concurrent_limit_exceeded(client_ip: str) -> bool:
+    """이 IP의 동시 진행중(PENDING+PROCESSING) + 예약중 슬롯이 상한 이상인지 판정한다(읽기 전용)."""
+    if not client_ip:
+        return False
+    with _lock_for(client_ip):
+        total = _in_progress_job_count(client_ip) + _active_reservation_count(client_ip)
+    return total >= CONCURRENT_JOB_LIMIT
+
+
+def _try_reserve_slot(client_ip: str) -> str | None:
+    """한도 미만이면 슬롯을 예약하고 토큰을 반환, 한도 도달이면 None. 조회+예약은 원자적."""
+    with _lock_for(client_ip):
+        total = _in_progress_job_count(client_ip) + _active_reservation_count(client_ip)
+        if total >= CONCURRENT_JOB_LIMIT:
+            return None
+        token = uuid.uuid4().hex
+        _reservations.setdefault(client_ip, {})[token] = (
+            time.monotonic() + _TRACKED_JOBS_TTL_SECONDS
+        )
+        return token
+
+
+def _release_slot(client_ip: str, token: str, job_id: str | None = None) -> None:
+    """예약을 반환한다. job_id가 있으면 같은 락 안에서 추적목록에 등록해 빈틈 없이 승계한다."""
+    with _lock_for(client_ip):
+        try:
+            if job_id:
+                _track_submitted_job(client_ip, job_id)
+        finally:
+            slots = _reservations.get(client_ip)
+            if slots is not None:
+                slots.pop(token, None)
+                if not slots:
+                    del _reservations[client_ip]
 
 
 def _track_submitted_job(client_ip: str, job_id: str) -> None:
@@ -103,27 +171,35 @@ def enforce_rate_limit(view_func):
 
     (1) 시간당 업로드 횟수, (2) 동시 진행중 job 2건 — 둘 중 하나라도
     초과하면 원래 뷰를 호출하지 않고(파일 저장/DB insert 등 부수효과가
-    시작되지 않도록) 429를 반환한다. 통과해 원래 뷰가 202로 신규 job을
-    발급하면, 그 job_id를 이 IP의 추적 목록에 추가해 다음 요청부터 동시
-    진행중 판정에 반영되게 한다.
+    시작되지 않도록) 429를 반환한다. 통과하면 뷰 호출 전에 슬롯을 예약하고,
+    뷰가 202로 신규 job을 발급하면 예약을 job_id 추적으로 승계하며, 그 외
+    결과(4xx/5xx/예외)면 예약만 반환한다.
     """
 
     @wraps(view_func)
     def _wrapped(request, *args, **kwargs):
         client_ip = request.META.get("REMOTE_ADDR", "")
 
-        if is_upload_rate_limited(client_ip) or is_concurrent_limit_exceeded(client_ip):
+        if is_upload_rate_limited(client_ip):
             return JsonResponse({"error": _RATE_LIMIT_MESSAGE}, status=429)
 
-        response = view_func(request, *args, **kwargs)
+        if not client_ip:
+            return view_func(request, *args, **kwargs)
 
-        if response.status_code == 202:
-            try:
-                job_id = json.loads(response.content).get("job_id")
-            except (ValueError, AttributeError):
-                job_id = None
-            _track_submitted_job(client_ip, job_id)
+        token = _try_reserve_slot(client_ip)
+        if token is None:
+            return JsonResponse({"error": _RATE_LIMIT_MESSAGE}, status=429)
 
-        return response
+        job_id = None
+        try:
+            response = view_func(request, *args, **kwargs)
+            if response.status_code == 202:
+                try:
+                    job_id = json.loads(response.content).get("job_id")
+                except (ValueError, AttributeError):
+                    job_id = None
+            return response
+        finally:
+            _release_slot(client_ip, token, job_id)
 
     return _wrapped

@@ -1,4 +1,6 @@
-# 테스트 결과서 (Test Result Report) — unit-22
+# 테스트 결과서 (Test Result Report) — unit-22 (v1 PASS 원문 + 11절 v2 재검증 PASS)
+
+> **현재 유효 판정은 11절(재검증 2회차, 2026-09-29, unit-22 v2 = DEC-063·064 5단계 재작업, 대상 `cleanup.py` sha1 `dbbaa4f0…`): PASS** (AC-1~AC-12 12/12, 결함 0건, 관찰 6건). 1~10절은 v1 원문(AC-1~7, 13 TC)이며 그대로 보존한다. v1의 서술 중 "`_sweep_expired_jobs()`의 분기(대상 0건 조기반환 / …)", "`exclude(status=EXPIRED)`만으로 EXPIRED 행을 건너뜀" 취지의 기술은 v2에서 예약 행 회수 대상이 추가되어 갱신되었다. 11절이 자기완결적으로 전체(AC-1~12 회귀 포함)를 재검증한다.
 
 ## 1. 개요
 - 테스트 대상: `webapp/converter/cleanup.py`(`run_lazy_sweep_if_due()`, `_sweep_expired_jobs()`) + `webapp/.env.example`(R2 라이프사이클 안내 주석) + **오케스트레이터가 반영한 `webapp/converter/views.py::index`의 통합 호출**(단위 소유 파일은 아니지만 AC-7이 이 통합을 명시적으로 검증 대상에 포함함)
@@ -161,3 +163,174 @@ flowchart TD
 | REQ-028 | 구현 상태 (비고 추가) | 기존 서술 유지 + 문장 추가: "06단계가 `views.py::index` 통합(오케스트레이터 반영분)이 실제 `GET /` 호출로 스윕을 트리거함을 end-to-end 실측 확인(2026-09-29, unit-22-test.md TC-009/TC-010)." |
 
 decisions.md에 남길 새로운 규칙 A 질문 없음(이 unit은 새로운 설계 모호함을 만나지 않았다 — AC-7 검증은 05가 이미 자체 판단으로 위임한 사항을 06이 검증한 것뿐).
+
+
+---
+
+# 11. 재검증(2회차, v2) — DEC-063·064 5단계 재작업 (규칙 F, 2026-09-29) — 자기완결
+
+## 11-1. 개요
+- 테스트 대상: `webapp/converter/cleanup.py` v2 (sha1 `dbbaa4f055b0dc64bbd555e26dc510789e70e134`). 스윕 대상에 "오래된 예약 행"(status=EXPIRED AND purged_at IS NULL AND 생성 후 70분 = TTL 60 + 유예 `ORPHAN_RESERVATION_GRACE_MINUTES` 10 경과) 추가. 뷰(`views.py`, sha1 `9d034aca…`)는 읽기·실행만 하고 수정하지 않음(unit-20 06 동시 검증 중, 그쪽 산출물 접촉 없음).
+- 테스트 유형: 단위 + 계약 맞물림 E2E(별도 프로세스 `os._exit`). 적용 Tier: High. 속도 트랙: L3. 수행자: 06(단위테스터), 병렬 웨이브 중 식별자 `_06_unit22b`.
+- 근거: unit-20-test.md 12절 DEF-020c-01(예약 EXPIRED 행+업로드 PDF가 프로세스 사망 등에서 영구 잔존), unit-22-note.md R절(R-1~R-10, AC-8~12), decisions.md DEC-063·064·065.
+- 인수 조건: 기존 AC-1~AC-7 전체 회귀 + 신규 AC-8~12 (note R-7).
+
+## 11-2. 범위
+- In: AC-1~12, 시간 경계(1분/60분/65분/69분59.999초/70분정각/70분+1ms/71분/200분), 멱등, 삭제 실패 재시도, 배치 합계 20 상한과 일반 우선, 조건부 UPDATE, 쿨다운·락, 쿼리 수·인덱스, 스레드·프로세스 동시 스윕, 로그 개인정보(실측 캡처), 삭제 범위 한정, 뮤턴트, `os._exit` 예약 잔존의 실제 회수(GET / 트리거 경유).
+- Out: 실제 R2 라이프사이클 설정(10~12단계), Postgres(Neon) 실측(SQLite만), gunicorn/Linux/Render, 뷰 쪽 검증(unit-20 06 몫).
+
+## 11-3. 테스트 환경 (정직한 기록)
+- **HWPX 재작업 중 격리**: 작업트리 `pdf_to_hwpx/`(hwpx_writer·core/orchestrator)는 unit-4R 재작업으로 import 단계에서 깨져 있다(의도된 상태). unit-22는 HWPX 출력과 무관하므로 `git archive HEAD pdf_to_hwpx | tar -x`로 HEAD 버전을 `.harness-tmp/_06_unit22b/pdf_to_hwpx`에 풀어 PYTHONPATH로 지정하고, `webapp/`은 작업트리 그대로 사용했다(`pip install -e .` 금지 준수). `converter.executor`(-> `pdf_to_hwpx.core.orchestrator`)는 이 HEAD 사본으로 import 성공. 즉 본 검증은 "작업트리 pdf_to_hwpx"가 아닌 HEAD 사본 기준이며, HWPX 재작업 완료 후 webapp 전체 통합(07/08)은 다시 확인해야 한다(`cleanup.py`는 `pdf_to_hwpx`를 import하지 않으므로 v2 판정에는 영향 없음).
+- 격리 venv: **Python 3.11.9**(요청에 3.13을 쓰던 이전 관례가 있으나 이 머신에는 3.13이 없어 `py -3.13` 실패, 3.11 사용). 실제 설치된 조합: Django 5.2.17, django-storages 1.14.6, Pillow 11.3.0(requirements 그대로, Pillow 충돌 없음), pypdf 6.19.0, pdfplumber 0.11.9, lxml 6.1.3, pytest 9.1.1, coverage(측정용). 관찰 O-6: 한국어 주석 때문에 cp949 로케일 Windows에서 `pip install -r webapp/requirements.txt`가 `UnicodeDecodeError`로 실패(`PYTHONUTF8=1`로 우회).
+- DB/스토리지: `DJANGO_SETTINGS_MODULE=s22b`(config.settings.dev 상속, DB/MEDIA_ROOT만 `.harness-tmp/_06_unit22b/` 하위 SQLite·media로 교체). 스토리지는 모킹이 아닌 실제 `FileSystemStorage`. 서버 포트는 쓰지 않고 Django 테스트 Client + 서브프로세스로 검증(183xx 미사용).
+- **시간 경계 방식(결정적)**: 실시간 대기 없이 (a) 시계 주입 — 행은 실제 `auto_now_add`로 생성(경계 케이스마다 생성 직후 `created_at`이 실시간과 30초 이내임을 단정, B-real-*), 판정 시점만 `django.utils.timezone.now`를 `created_at + Δ`로 고정, (b) `created_at` UPDATE. 두 방식이 1/65/69/71/200분에서 동일 결과임을 X1로 교차 확인하여 조작이 실제 코드 경로를 우회하지 않음을 보였다. `cleanup.py`는 `timezone.now()`를 호출 시점에 조회하므로 주입이 그대로 반영됨은 뮤턴트 M05d(`lt`->`lte`, 1ms 경계)가 검출되는 것으로도 재확인.
+- 검증 스크립트는 규칙 K에 따라 저장소에 남기지 않는다(`.harness-tmp/_06_unit22b/` 삭제 완료).
+
+## 11-4. 테스트 케이스 및 결과
+총 82개 단정 = core 45 + extra 20 + e2e 17, 전부 PASS. 최종 클린 재실행(DB/media 새로 생성)에서도 동일. (기대와 실제를 값으로 비교한 단정이며 "에러 없음"만으로 PASS 처리한 항목 없음.)
+
+| ID | 대응 AC | 시나리오 / 절차 | 예상 | 실제 | 판정 |
+|---|---|---|---|---|---|
+| AC8-a/b/c | AC-8 | EXPIRED, purged NULL, 200분 경과 + 업로드·결과 파일 실존 -> 스윕 | 반환 1, 두 파일 삭제, purged_at 기록, 행 EXPIRED 유지 | 동일 | PASS |
+| B-1분 ... B-200분 (8케이스) + B-real-* | AC-8/9 | 예약 행을 실제 생성 후 판정 시점을 +1분/60분/65분/69분59.999초/70분정각/70분+1ms/71분/200분으로 주입 | 70분 이하(정각 포함) 무변경, 70분+1ms 이상 회수 | 1·60·65·69:59.999·70:00 무변경(파일 잔존), 70:00.001·71·200 회수 | PASS |
+| B-reg-* (3) | AC-1 회귀 | DONE 59분59.999초/60분정각/60분+1ms | 60분 초과만 정리 | 동일 | PASS |
+| AC10-a/b | AC-10 | 이미 purged_at 있는 EXPIRED(200분) + 업로드 파일 | `delete_job_objects` 호출 없음, purged_at·파일 불변 | 동일(spy로 호출 인자 검사) | PASS |
+| AC10-c | AC-1 회귀 | 200분 DONE 동시 존재 | EXPIRED + 파일 삭제, 반환 1 | 동일 | PASS |
+| AC10-d/e | AC-10 | 재스윕(쿨다운 해제) | 0건, 전 행 (status,purged_at) 불변, delete 미호출 / 고아 정리 후 purged_at 불변 | 동일 | PASS |
+| SEC-a/b | 보안 | 한 배치에 DONE 30분·59분(다운로드 대기), PENDING 5분, PROCESSING 20분, FAILED 40분, 예약 1·65·69분 + 회수 대상 예약 100분 | 앞의 8건 status/purged/파일 전부 무변경, 100분 예약만 회수 | 동일 | PASS |
+| AC11-a/b | AC-11 | `delete_job_objects`가 OSError -> 스윕, 이어서 정상 스윕 | 0건·행 존재·purged NULL·파일 잔존 -> 다음 스윕 1건 회수 | 동일 | PASS |
+| AC11-c | AC-5/11 | 3건 중 1건만 실패 | 2건 처리, 실패 1건만 행·파일 잔존 | 동일 | PASS |
+| AC12-a~e | AC-12 | 일반 15(오래됨) + 예약 15 | 합계 정확히 20 = 일반 15 + 예약 5(오래된 순), 예약 10 이월, delete 호출 20회·중복 없음, 다음 스윕 10건 | 동일 | PASS |
+| AC12-f | AC-12 | 예약 25건 | 20건, 5건 이월 | 동일 | PASS |
+| AC12-g/h | AC-12/4 | 일반 20 + 예약 3 / 일반 21 | 일반이 20을 채우면 예약 이월(우선순위) / 21건도 20 상한 | 동일 | PASS |
+| COND-a | AC-8 조건부 UPDATE | 삭제 도중(side effect) PENDING으로 승격 | purged_at 미기록, status PENDING 유지, 반환 0 | 동일 | PASS |
+| COND-b | 조건부 UPDATE | 삭제 도중 다른 경로가 purged_at 기록 | 덮어쓰지 않음 | 동일 | PASS |
+| CD-a/b/c | AC-3 | 쿨다운 이내 재호출(쿼리 0회 캡처) / monotonic 299.9초 / 300.0초 | 0건·쿼리 0 / 스킵 / 실행 | 동일 | PASS |
+| X1 | 시간 조작 동치 | 시계 주입 vs created_at UPDATE (1/65/69/71/200분) | 결과 동일 | 동일 | PASS |
+| X2-a~c | 쿼리 수 | 일반5+예약5 / 일반 20 / 대상 0 | SELECT 2·UPDATE 2 / SELECT 1 / SELECT 2·UPDATE 0 | 동일(실제 SQL 4문 캡처) | PASS |
+| X2-d/e/f | 인덱스·성능 | 20k행에서 EXPLAIN QUERY PLAN, 스윕 1회 시간 | 예약 쿼리 인덱스 SEARCH, 1초 미만 | 예약: `SEARCH ... USING INDEX converter_c_status_ba430f_idx (status=? AND created_at<?)`, 일반: `SCAN` + `TEMP B-TREE FOR ORDER BY`(O-1), 스윕 13~17ms | PASS(O-1) |
+| X3-a | 삭제 범위 | 대상 옆에 다른 job 파일·`uploads/keep_me.txt`·`<uuid>.pdf.bak`·`other/<uuid>.pdf` 배치 | 대상의 정확히 2개 키만 삭제 | 나머지 전부 잔존 | PASS |
+| X3-b/c | 키 UUID 근거 | 코드(`upload_object_key`=`uploads/{job_id}.pdf`) + 디스크 실측(한글 원본명 `홍길동_주민번호_이력서.pdf`로 업로드) | 디스크 파일명 `<uuid>.pdf`, 원본명 미포함 | `['<uuid>.pdf']` | PASS |
+| X3-d | 로그 실측(성공) | 루트 로거 DEBUG 핸들러로 캡처 | 원본명 조각 미포함 | 캡처 전문: `INFO converter.cleanup TTL 지연 스윕: 1건 정리(EXPIRED 처리, 그중 고아 예약 행 후보 1건)` - 파일명·경로·job_id 없음 | PASS |
+| X3-e/f | 로그 실측(실패, 실제 OSError) | 업로드 키 위치를 비어있지 않은 디렉터리로 만들어 실제 `FileSystemStorage.delete`가 OSError -> 스윕, 원인 제거 후 재스윕 | 0건·purged NULL·로그에 job_id(UUID) 포함, 파일명/PII 조각 미포함 -> 재시도 성공 | 로그: `ERROR converter.cleanup TTL 스윕: job c0954791-... 오브젝트 삭제 실패...` + traceback(경로 `...\media\uploads\c0954791-....pdf` = UUID 기반 서버 경로, 원본명 없음), 다음 스윕 1건 회수 | PASS |
+| X6-a/b | 관찰 | 영구 삭제 실패 일반 20건 / 영구 실패 예약 20건이 앞에 있음 | (관찰) 뒤 대기 행 회수 차단 | 3회 스윕 모두 0건, 정상 예약 행 잔존 | 관찰 O-2 |
+| X7 | 예외 흡수 | `_sweep_expired_jobs`가 RuntimeError | 0 반환 + logger.exception, 쿨다운 소모 | 동일 | PASS |
+| X8 | 관찰 | 다운로드로 purged_at이 이미 있는 DONE 65분 행 | (관찰) 일반 경로는 무조건 UPDATE라 purged_at 재기록 | 재기록됨(기존 v1 동작) | 관찰 O-4 |
+| X4-a/a2 | 동시성(스레드) | 6스레드가 동시에 `_sweep_expired_jobs`(쿨다운 우회), 20 예약 행 | 20건 전부 회수, 행 20 유지, 예외 없음, 반환 합계 20 | 반환 `[18,1,1,0,0,0]` 합계 20 | PASS |
+| X4-b | 락 | 10스레드 `run_lazy_sweep_if_due` | 내부 스윕 1회 | 1회, 반환 `[0]*9+[7]` | PASS |
+| E1-a/b/c | **unit-20 맞물림** | 별도 프로세스가 실제 `POST /convert`(한글 파일명 PDF)에서 `submit_job` 단계에 `os._exit(7)` | 종료코드 7, EXPIRED 예약 행 1건(purged NULL) + 업로드 `<uuid>.pdf` 1개 잔존, 폴링·다운로드 404 | 동일 | PASS |
+| E2-1/65/69.9/71 | 맞물림 회수 | 그 잔존 상태에서 다른 프로세스가 `GET /`(실제 트리거 경로 index -> `run_lazy_sweep_if_due`)를 시계 +1/65/69.9/71분으로 호출 | +71분에서만 파일 삭제·purged_at 기록, 200 응답, 행 EXPIRED 유지 | 동일 | PASS |
+| E2-v, E2-idem/2 | 맞물림 | 회수 후 뷰 404 유지, +300분 재스윕 | 404 유지, purged_at 불변 | 동일 | PASS |
+| E3-a/b/c | 정상 흐름 | 정상 제출(202, PENDING 승격) 후 +30분 / +71분 | +30분 무변화(예약 규칙 대상 아님); +71분은 기존 60분 규칙(AC-1)으로 정리(설계) | 동일 | PASS |
+| E4 | **정상 예약 구간 보호** | `submit_job`을 3초 지연(락 안), 1초 시점 실시간 스윕 | 예약 행·업로드 보존, 이후 202·PENDING 승격·업로드 유지 | 동일(unit-20-test TC-270/271과 같은 지연 방식을 이 unit에서 독립 재현) | PASS |
+| E5-a/b/c | 다중 프로세스 | 4프로세스가 같은 20 예약 행을 `run_lazy_sweep_if_due`로 동시 스윕(삭제 50ms 지연으로 겹치게), 추가 4라운드 반복 | 최종 상태 일관(20건 purged, 행 20, 파일 0), 반환 합계 20, 'database is locked' 없음 | 5회 모두 합계 20·전부 purged·purged_at 값 1종류. 반환 분포 예 `[2,18,0,0]`, `[14,1,2,3]`, `[0,1,19,0]`, `[16,0,4,0]` | PASS (O-3) |
+
+### 11-4-1. 뮤턴트 검증 (같은 core 45단정을 뮤턴트 사본에 실행, 원본 무수정)
+| 뮤턴트 | 결과 | 검출한 단정 |
+|---|---|---|
+| M00 대조군(무변경 복사) | 통과(0 FAIL) | - |
+| M01 예약 조건 status=EXPIRED 제거 | KILLED | AC12-a/b/c/e |
+| M02 예약 조건 purged_at IS NULL 제거 | KILLED | AC10-a/b/d, AC12-e |
+| M03 예약 조건 시간 제거 | KILLED | B-1분·60분·65분·69분59.999초·70분정각, SEC-a/b |
+| M04 조건부 UPDATE 제거(둘 다) / M04b purged_at 조건만 / M04c status 조건만 | KILLED x3 | COND-a, COND-b (b는 COND-b만, c는 COND-a만 정확히) |
+| M05 유예 0 / M05b 9분 / M05c 11분 / M05d `lt`->`lte` | KILLED x4 | B-65분·69:59.999·70분정각·SEC-*; B-70분+1ms·71분; B-70분정각(1건만) |
+| M06 정리 후 purged_at 미기록 | KILLED | 13개 |
+| M07 삭제 실패를 성공 취급 / M07b 실패 시 행 삭제 | KILLED x2 | AC11-a/b/c |
+| M08 예약 배치 상한([:remaining]) 제거 / M09 remaining 무시 | KILLED x2 | AC12-a~f |
+| M10 일반 배치 상한 제거 | KILLED | AC12-h |
+| M11 예약 정렬 내림차순 | KILLED | AC12-b/d |
+| M12 쿨다운 제거 | KILLED | CD-a/b/c |
+| M13 TTL 60->30 | KILLED | 8개 |
+| M14 일반 쿼리 EXPIRED 제외 제거 | KILLED | 15개 |
+| M15 일반 우선 위반(일반 슬라이스 10) | KILLED | AC12-a/b/d/g/h |
+| M17 삭제 호출 생략 후 purged_at만 기록 | KILLED | 11개(AC8-b 등) |
+- 21개 뮤턴트 전부 검출, 대조군 통과. 작성 중 테스트 설계 결함 1건 발견·수정: 최초 M15는 코드를 실제로 바꾸지 않는 무의미 뮤턴트라 생존했다 -> 실제 로직을 바꾸는 M15로 교체(생존을 "테스트가 약함"이 아니라 "뮤턴트가 무의미함"인지 먼저 의심).
+- 라인 커버리지: `cleanup.py` 59문장 미커버 0 = 100%(core+extra 실행, coverage.py). 분기 커버리지는 측정하지 않음.
+
+## 11-5. 커버리지 (AC 1:1)
+| AC | 케이스 |
+|---|---|
+| AC-1~7 회귀 | AC10-c, B-reg-*, AC11-c, AC12-g/h, CD-a~c, SEC-*, 상태값 계약(스윕이 쓰는 status는 EXPIRED뿐, 소스 확인 + 전 케이스에서 기존 5값만 관측), `views.index` 트리거(E2, E3) |
+| AC-8 | AC8-a/b/c, B-70분+1ms·71분·200분, E1/E2-71 |
+| AC-9 | B-1분·60분·65분·69분59.999초·70분정각, SEC-a, E2-1/65/69.9, E4 |
+| AC-10 | AC10-a~e, E2-idem2, COND-b |
+| AC-11 | AC11-a/b/c, X3-e/f |
+| AC-12 | AC12-a~h, X2-a/b |
+
+## 11-6. 결함 및 관찰 목록
+**결함(5단계 반려 대상): 없음.** 근거: 82개 단정 전부 PASS, 21개 뮤턴트 전원 검출, 최종 클린 재실행 동일, unit-20 계약과의 end-to-end(E1~E4) PASS.
+
+5단계 게이트 확인: note R-6의 "저장소에 lint 설정 없음" 주장을 재확인 -> `pyproject.toml`에 ruff/mypy 설정 없음, `python -m py_compile webapp/converter/cleanup.py` 성공(생성된 pyc는 삭제). 자체 코드 리뷰 체크리스트(R-6)가 note에 기재되어 있고, 06이 코드를 직접 읽어 대조: 예외 삼킴 없음(`logger.exception`), 시크릿·신규 의존성 없음, 변경 범위 `cleanup.py` 1개 -> 일치.
+
+관찰(결함 아님, 판정 무영향):
+- **O-1 (Low, 문서 정확성/규모)**: note R-4는 "쿼리 2회 모두 인덱스 `(status, created_at)` 사용"이라 했으나 실측 플랜은 예약 쿼리만 인덱스 SEARCH이고, 일반 쿼리(`NOT status='expired' AND created_at<? ORDER BY created_at`)는 `SCAN` + `USE TEMP B-TREE FOR ORDER BY`다(v1부터 존재, v2에서 바뀌지 않음). `ConversionJob` 행이 03 §3-2/§6-2의 "30일 후 하드 삭제"로 지워지지 않으면(Q-1) 행이 선형 누적되어 스윕 비용도 선형 증가한다. 실측(SQLite): 20k행 스윕 13~17ms, 200k행 스윕 약 90~115ms(쿼리별 30~78ms). 무료 플랜 규모에서는 무시 가능. Postgres 플랜은 미측정.
+- **O-2 (Low, 기아)**: 삭제가 영구 실패하는 일반 job이 20건 쌓이면 `created_at` 오름차순 선두를 계속 점유해 뒤의 예약 행(및 다른 정상 대상)이 처리되지 않는다(X6-a/b). "실패 시 행 유지 후 재시도"라는 의도된 설계의 부작용이며 현실 발생 조건은 스토리지 권한·경로 고장 같은 장애 상황이다(그 경우 삭제 자체가 전면 불가). `logger.exception`이 남으므로 운영 알림으로 감지 가능.
+- **O-3 (Info, 동시성)**: 다중 프로세스가 같은 대상을 동시에 처리하면(03 §2-1은 단일 워커 전제) Windows `FileSystemStorage`에서 동시 삭제 경합으로 `PermissionError`가 개별 job 실패로 로그에 남을 수 있다(라운드당 2~24건). 최종 상태는 항상 일관(전부 회수, 합계 20, purged_at 단일 값, DB lock 없음)이고 실패분은 다음 스윕 재시도 대상이라 안전. R2(S3)는 삭제가 멱등이라 재현되지 않을 것으로 추정(미검증).
+- **O-4 (Info, 기존 v1 동작)**: 일반 경로 UPDATE는 조건이 없어, 다운로드로 이미 `purged_at`이 기록된 DONE 행이 60분 후 스윕되면 `purged_at`이 스윕 시각으로 재기록된다(X8). 데이터 손실 없음. "최초 purge 시각"이 바뀐다는 점만 유의.
+- **O-5 (Info, 문서 정확성)**: `cleanup.py` 주석·note R-3는 정상 예약 구간을 "`_submit_lock` 안의 save~승격"이라 하나, 실제 `views.convert`는 `job.save()`(예약)를 락 밖에서 수행하고 이후 업로드 저장 -> 락 대기 -> `submit_job` -> 승격 순이다. 실제 예약 구간 = 저장~승격 전체(50MB R2 업로드·락 대기 포함, 수 초~수십 초 추정). 70분 유예 대비 여전히 큰 여유이며 E4(3초 지연)로 보존을 실증했으나 서술 정정을 권고한다. 또 이론상 예약 행이 70분 넘게 살아있다가 "삭제 도중 승격"되면 조건부 UPDATE가 DB(status)는 지키지만 이미 지워진 업로드 파일은 복구 불가(COND-a) - 정상 흐름에서는 도달 불가.
+- **O-6 (Info, 환경)**: cp949 Windows에서 `pip install -r webapp/requirements.txt` 실패(11-3).
+
+## 11-7. 테스트 환경 정리(Teardown) - 규칙 K
+- 생성 아티팩트: `.harness-tmp/_06_unit22b/` 전체(venv, SQLite DB, media, 검증 스크립트, 뮤턴트 사본 45개, coverage 데이터, 로그) - 전부 이 디렉터리 하위. 프로젝트 루트 egg-info·`webapp/.coverage` 없음(확인). `py_compile`이 만든 `webapp/converter/__pycache__/cleanup.cpython-311.pyc`(gitignore 대상)는 삭제.
+- 삭제 완료: `.harness-tmp/_06_unit22b/`. 남은 `.harness-tmp/` 항목: `_06_unit20d`(상대 06 에이전트 소유), `probe`(사용자 전달물), `run_local.log`, `venv_run_local`(오케스트레이터) - 접촉하지 않음. `webapp/db.sqlite3`·`webapp/.dev-media`·8000 포트 서버는 손대지 않음(서버 종료 시도 없음).
+- 소스·설계서·`tests/`·`pdf_to_hwpx/`·`참조HWPX/` 수정 없음. `traceability.md`·`decisions.md` 직접 수정 없음. 중단(TaskStop 등) 없음.
+- 정리 후 `git status --short` 원문(소유 주석 추가):
+```
+ M .gitignore                                   <- 타 작업(오케스트레이터)
+ M docs/harness/03-system-design.md             <- 타 작업
+ M docs/harness/decisions.md                    <- 타 작업
+ M docs/harness/traceability.md                 <- 타 작업
+ M docs/harness/units/unit-20-note.md           <- unit-20
+ M docs/harness/units/unit-20-test.md           <- unit-20 (동시 06 에이전트)
+ M docs/harness/units/unit-22-note.md           <- unit-22 05 재작업(v2)
+ M docs/harness/verify-log_03-system-design.md  <- 타 작업
+ M docs/harness/verify-log_unit-20-note.md      <- unit-20
+ M docs/harness/verify-log_unit-20-test.md      <- unit-20 (동시 06 에이전트)
+ M pdf_to_hwpx/common/exceptions.py             <- unit-4R
+ M pdf_to_hwpx/hwpx_kernel/__init__.py          <- unit-4R
+ M pdf_to_hwpx/hwpx_kernel/container.py         <- unit-4R
+ M pdf_to_hwpx/hwpx_kernel/schema.py            <- unit-4R
+ M tests/hwpx_kernel/test_container.py          <- unit-4R
+ M tests/hwpx_kernel/test_container_bin_data.py <- unit-4R
+ M tests/hwpx_kernel/test_schema.py             <- unit-4R
+ M webapp/converter/cleanup.py                  <- unit-22 05 재작업(v2, 테스트 대상)
+ M webapp/converter/views.py                    <- unit-20 05 재작업(읽기·실행만)
+?? docs/harness/analysis/                       <- 타 작업
+?? docs/harness/units/unit-27-note.md           <- unit-27
+?? docs/harness/units/unit-4R-note.md           <- unit-4R
+?? docs/harness/verify-log_unit-22-note.md      <- unit-22 05 (v2)
+?? docs/harness/verify-log_unit-27-note.md      <- unit-27
+?? docs/harness/verify-log_unit-4R-note.md      <- unit-4R
+?? pdf_to_hwpx/hwpx_kernel/{constants,context,flow,fonts,section,styles,validator}.py <- unit-4R
+?? tests/fixtures/, tests/hwpx_kernel/{conftest,helpers,test_constants_fonts,test_flow,test_probe,test_section,test_styles}.py, tests/hwpx_validator/ <- unit-4R
+?? tools/                                       <- 타 작업
+?? 작업상태/현재상태_03.png                      <- 타 작업(이 단위 무관)
+(이 06 호출이 갱신한 파일: docs/harness/units/unit-22-test.md, docs/harness/verify-log_unit-22-test.md - 두 파일은 위 스냅샷 시점 이후 수정되어 M로 표시됨)
+```
+- 판정: 이 단위가 만든 임시 아티팩트·미추적 잔여물 없음 -> Teardown 충족.
+
+## 11-8. 리스크 및 잔존 이슈
+1. **트리거 한계(기존 설계, 무변경)**: 스윕은 `GET /`(`views.index`)에서만 호출된다(03 §6-2의 "미들웨어 훅, 매 요청" 서술과 실제가 다름). 트래픽이 없으면 실행되지 않아 예약 잔존 행은 "70분 + 쿨다운 5분 + 다음 `GET /`"까지 남을 수 있다. 백스톱인 R2 버킷 라이프사이클(24시간 후 만료, 03 §6-2)은 `webapp/.env.example` 29~38행에 "해야 할 설정"으로만 안내되어 있고 실제 R2 콘솔 적용은 10~12단계 몫이라 현재는 미적용·검증 불가. 그 전까지 트래픽 부재 시 잔존 PDF의 상한은 사실상 없다.
+2. 단일 프로세스(gunicorn `--workers 1`, 03 §2-1) 전제. 다중 워커면 쿨다운이 프로세스별이라 스윕 빈도만 늘며 안전성은 E5로 확인.
+3. Postgres(Neon) 미검증: 조건부 UPDATE(`status=... AND purged_at IS NULL`)는 표준 SQL이라 동일할 것으로 추정하나 SQLite에서만 실측.
+4. 프로세스 사망으로 남은 예약 행의 업로드 PDF는 클라이언트에 job_id가 전달된 적이 없어 "60분 후 삭제" 약속 대상은 아니나, 개인정보 관점에서는 저장 최대 시간이 사실상 70분+α로 늘 수 있다(방침 문구 확인은 unit-25/12단계 몫).
+5. 실제 브라우저·Linux·Render·R2 미검증.
+
+## 11-9. 결론 및 판정
+- [x] **PASS** - AC-1~AC-12 12/12, 결함 0건, 관찰 O-1~O-6. 07 handoff 가능(Feature B 07은 전 단위 06 종료 후 오케스트레이터가 호출). unit-20 06(별도 에이전트) 판정과 함께 DEF-020c-01의 "뷰 측 예방 + 스윕 측 회수" 계약 맞물림은 E1~E4로 end-to-end 확인됨.
+- 미결 질문(규칙 A, 판정 비차단):
+  - **Q-1**: 03 §3-2/§6-2가 정한 "`ConversionJob` 행 30일 후 하드 삭제"를 구현하는 단위/코드가 저장소에 없다(`webapp` 내 해당 로직 없음 확인). REQ-028에 포함할지, 별도 단위로 둘지 결정 필요(O-1의 행 누적과 연결).
+  - **Q-2**: 03 §6-2는 스윕 트리거를 "`core/middleware.py` 훅, 매 요청"으로 서술하나 실제는 `GET /`뿐이다(DEC-064 관찰과 동일). 설계서를 실제에 맞출지, 트리거를 넓힐지 결정 필요(현재 동작은 AC-7 기준으로 문제 없음).
+
+## 11-10. 내부 검증 (규칙 B, 상세는 `verify-log_unit-22-test.md` 회차 2)
+- 1차(작성자): AC-8~12 및 회귀 AC-1~7이 각각 1개 이상 단정과 대응(11-5). 예상값은 코드가 아니라 note R-7·DEC-064·03 §6-2 근거로 작성. 작성 중 발견한 테스트 설계 결함 2건 수정(M15 무의미 뮤턴트, E5 최초 실행에서 프로세스 겹침이 없었음 -> 삭제 지연 주입·시작 동기화·반복 라운드로 실제 경합을 만든 뒤 판정).
+- 2차(독립 심사자): "통과했으니 07에 넘겨도 되는가"를 의심 - (a) 경계 단정이 ms 단위인지(M05d), (b) 시간 조작이 코드 경로를 우회하지 않는지(X1, B-real), (c) 조건부 UPDATE 각 조건이 개별 검출되는지(M04b/c), (d) 05가 `or True`로 무의미해서 뺀 "로그에 파일명 미포함"을 실제 로그 캡처로 실증했는지(X3-d/e 캡처 전문), (e) O-2 같은 운영 위험을 결함으로 과소평가하지 않았는지 -> 추가 결함 없음.
+
+## 11-11. 공유 문서 갱신 요청 (직접 수정하지 않음)
+| 대상 | ID | 컬럼 | 값 |
+|---|---|---|---|
+| traceability.md | REQ-028 | 단위테스트 | **PASS(v2 재검증 2회차, 2026-09-29)** - `docs/harness/units/unit-22-test.md` 11절, `verify-log_unit-22-test.md` 회차 2. AC-1~12 12/12, 82 단정, 뮤턴트 21/21 검출(대조군 통과), `cleanup.py` 라인 커버리지 100%, unit-20과 `os._exit` E2E 맞물림 확인. 결함 0, 관찰 O-1~O-6, 미결 Q-1·Q-2 |
+| traceability.md | REQ-028 | 구현 상태 | "v2 재작업 ... 06 재검증 대기(AC-8~12)" 문구를 "06 재검증 PASS(2026-09-29)"로 교체 |
+| 결함 추적 | DEF-020c-01 | 상태 | Closed(스윕 측 회수 확인) - unit-22 v2가 `os._exit` 잔존 예약 행+업로드를 +71분 `GET /` 트리거에서 회수함을 실증(뷰 측 예방 검증은 unit-20 06 판정과 합산) |
+| decisions.md | DEC-064 | 비고 추가 | "06 재검증 PASS: 70분 경계 ms 단위 검증, 유예 근거는 E4로 재확인. 정정 권고 - 정상 예약 구간은 '락 안 save~승격'이 아니라 '저장~업로드~락대기~승격'(O-5). 기아(O-2)·일반 쿼리 비인덱스(O-1)는 Low 관찰" |
+| decisions.md | 신규(규칙 A 질문) | - | Q-1(ConversionJob 30일 하드삭제 구현 단위 배정), Q-2(03 §6-2 트리거 서술 vs `GET /` 실제) 결정 요청 |

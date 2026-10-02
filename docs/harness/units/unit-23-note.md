@@ -90,3 +90,95 @@
 ## 8. 공유 문서 갱신 (직접 반영 완료 — 단독 호출로 간주)
 
 착수 프롬프트가 "views.py를 공유하는 다른 unit이 동시에 안 돌고 있음을 확인했으므로 단독 호출로 간주해 직접 갱신해도 됨"이라고 명시했으므로, `docs/harness/traceability.md`의 REQ-026 행(작업 단위/구현 상태/비고)을 직접 갱신했다(위 3절 내용 반영). 다만 2절에서 밝힌 대로 **`views.py`가 세션 시작 시점 이후 unit-22 산출물로 추정되는 변경(REQ-028 지연 스윕 트리거)을 이미 포함한 상태로 발견됐다** — 이 unit이 그 변경을 만든 것은 아니며, 손대지도 않았다. 오케스트레이터는 최종 `views.py`가 unit-20/22/23의 변경을 모두 포함해 정상 병합됐는지(특히 `from . import cleanup, limits, ratelimit, storage` 한 줄에 세 unit의 이름이 모두 들어있는지) 웨이브 종료 후 한 번 더 확인 권장.
+
+---
+
+# 재작업 이력 v2 — DEF-023-01 (규칙 F, DEC-044) — 05단계 재작업
+
+- 작성 에이전트: 05-unit-developer / 일자 2026-09-29 / **속도 트랙: L3(변경 없음)** / 병렬 웨이브 아님(다만 타 에이전트가 `webapp/core/net_guard.py`·`wsgi.py`·문서를 동시에 수정 중 — 손대지 않음)
+- 트리거: `unit-23-test.md` CONDITIONAL PASS(70/71), TC-903 FAIL. 같은 IP 4스레드 동시 최초 POST 10라운드 모두 202가 4건(기대 <=2).
+
+## R-1. 변경 내역
+- 수정 파일은 `webapp/converter/ratelimit.py` **1개뿐**. `views.py`는 변경 불필요(데코레이터 위치·시그니처 동일)라 **미수정**. executor/storage/models/settings/requirements/core/wsgi 미접촉.
+- 원인: 조회(뷰 실행 전)와 등록(뷰 종료 후) 사이 구간이 길어 check-then-act 경쟁.
+- 수정: 뷰 호출 **전에** 슬롯 예약, 뷰 종료 시 202면 예약을 job_id 추적으로 승계, 아니면 반환.
+  - `_try_reserve_slot(ip)`: IP별 락 안에서 `(추적 job_id 중 DB상 PENDING/PROCESSING 수) + (유효 예약 수) >= 2`이면 None(429), 아니면 예약 토큰 발급 — 조회와 예약이 원자적.
+  - `_release_slot(ip, token, job_id)`: 같은 락 안에서 (202면) 추적목록 등록 후 예약 제거. 승계 중간에 카운트 빈틈이 없다. 추적목록 `get->append->set`의 lost update(DEF 설명의 부수 위험)도 이 락으로 함께 해소됨.
+  - `enforce_rate_limit`: `try/finally`로 뷰가 예외를 던져도 예약 반환. 시간당 카운터(`is_upload_rate_limited`)는 기존과 동일하게 먼저 호출(순서·의미 불변).
+  - 예약 TTL 상한(`_TRACKED_JOBS_TTL_SECONDS`=60분, monotonic): 스레드가 매달려 finally에 도달 못 해도 영구 잠금 방지(기존 좀비 PENDING의 TTL 상한과 동일 정책).
+  - `is_concurrent_limit_exceeded`는 공개 함수로 유지(읽기 전용, 예약도 합산).
+  - `REMOTE_ADDR==""`이면 예약 없이 기존처럼 뷰 직행(fail-open 유지, 범위 외).
+
+## R-2. 설계 근거 / 기각한 대안
+- **락 종류**: 전역 락 1개 대신 IP 해시 기반 64개 스트라이프 락. 락 안에서 LocMemCache get/set과 job_id<=50개 IN 쿼리 1회만 수행하므로 짧지만, DB(Neon) 지연이 있어도 다른 IP를 막지 않도록 스트라이프로 분리. **뷰 본체(파일 저장·DB insert·submit_job)는 락 밖**이라 서비스 직렬화 없음.
+- **데드락**: 한 번에 락 하나만 획득, 락 안에서 다른 락을 잡거나 뷰를 호출하지 않음(중첩 없음). 락 안 예외도 `with`가 해제. 해시 충돌 IP끼리는 단지 잠시 대기.
+- **예약 저장소**: 프로세스 메모리 dict. 캐시(LocMemCache)와 같은 단일 프로세스 전제(03 §2-1, DEC-032). 캐시 `add/incr` 방식은 executor 완료 훅(수정 금지)이 없어 DB 재조회와 병행해야 하므로 기각.
+- **DB 카운트를 락 밖에서 스냅샷하는 안**: 스냅샷 이후 다른 스레드의 승계가 끼면 과통과 가능 -> 기각(락 안 조회로 정확성 우선).
+
+## R-3. 설계서 대비 편차
+- 없음. 429 문구·상태코드·IP 판정·시간당 20회 로직 무변경. 03/04 문서 수정 요청도 없음.
+
+## R-4. 게이트 1 (정적 분석)
+- 레포에 ruff/flake8/mypy/black 설정 없음(원 note 3절과 동일, 재확인: pyproject.toml/webapp에 설정 파일 없음). 대체로 `python -m py_compile webapp/converter/ratelimit.py` 통과 + 아래 실측.
+
+## R-5. 로컬 동작 확인 (격리 venv `.harness-tmp/venv_05_unit23`, 스크립트 `.harness-tmp/_05_unit23/t.py`, 종료 후 삭제)
+Django `Client` 다중 스레드(Barrier 동시 출발), dev 설정, SQLite/MEDIA_ROOT는 `.harness-tmp` 경로, `submit_job`=no-op(job이 PENDING 유지, 06 TC-903 재현절차와 동일). 라운드마다 캐시·DB·예약 초기화.
+
+**Before (HEAD의 ratelimit.py, 라운드 12회씩)**
+| 스레드 | 라운드별 202 최댓값 | PENDING 행 |
+|---|---|---|
+| 4 | 4 (12/12 라운드) | 4 |
+| 16 | 16 | 16 |
+| 40 | 20 (시간당 한도가 상한) | 20 |
+
+**After (수정본, 12라운드씩)**
+| 스레드 | 202 | 429 | PENDING 행 | 기타 코드 |
+|---|---|---|---|---|
+| 4 | 정확히 2 (12/12) | 2 | 2 | 0 |
+| 16 | 정확히 2 | 14 | 2 | 0 |
+| 40 | 정확히 2 | 38 | 2 | 0 |
+
+- 한 IP 8스레드 x5라운드에서도 추적목록 길이 == 202 수(2) 확인(lost update 없음).
+- 슬롯 반환: 뷰 예외(저장 단계 RuntimeError 3회) 후 예약 잔량 0 / 400 x5 후 예약 0·이후 정상 / 503(QueueFull) x4 후 예약 0 / CSRF 403 x4·413은 시간당 카운터 미생성(카운터 None).
+- 해제: 순차 202,202,429 -> 1건 DONE 후 202 -> 전부 FAILED 후 202,202,429. 예약 2건 만료(TTL 상한 시뮬레이션: monotonic 과거로 조작) 후 재예약 성공, 만료 전에는 3번째 거절.
+- 경계: 즉시 완료 스텁으로 22회 POST -> 1~20 202, 21·22 429; 429 본문이 기존 확정 문구와 일치; IP A 소진과 무관하게 IP B 202; GET `/` 무영향; `REMOTE_ADDR=""` 5회 모두 202(기존 fail-open 유지, 예약 미생성).
+- 결과: 위 실측 항목 전부 PASS, 스크립트 최종 `FAILS 0`. (중간에 스크립트 자체 결함 2건 — Status 문자열 대소문자, None 참조 — 을 발견해 코드 결함이 아님을 확인 후 스크립트 수정·재실행.)
+- 이 실측은 05의 최소 동작 확인이며 06 결과서가 아니다. 정식 재검증(TC-903/904/905 재실행)은 06 책임.
+
+## R-6. 게이트 2 체크
+- [x] 명세 일치(03 §6-4/DEC-032, 04 문구 불변) - [x] 에러 경로: 예외는 삼키지 않고 finally로 반환 후 재전파, 파싱 실패는 기존과 동일하게 job_id=None
+- [x] 경계 입력 검증: 신규 사용자 입력 없음(REMOTE_ADDR는 미들웨어 정규화값) - [x] 시크릿 없음 - [x] 신규 의존성 없음(표준 라이브러리 threading/time/uuid만)
+- [x] 범위 외 변경 없음(ratelimit.py 1개, views.py 미수정)
+
+## R-7. 06 재검증 인수 조건
+- AC-9(신규): 같은 IP N스레드(4/16/40) 동시 최초 POST(submit_job=no-op) 반복 라운드에서 202는 항상 2건 이하, PENDING 행도 2건 이하, 나머지 429(문구 불변).
+- AC-4/5, AC-1~3 기존 그대로 유지(무회귀). 예외·4xx·503 후 슬롯 미누수. 데드락/행 없음(스레드가 모두 join 됨).
+- 수동 확인: 실제 gunicorn `--threads 4`와 실 executor 조합에서의 한도(실환경 스레드 스케줄링)는 배포 전 07/10단계에서 확인 권장.
+
+## R-8. 범위 외 유지(코드 변경 안 함)
+REMOTE_ADDR 빈 문자열 fail-open, IPv6 대소문자/주소 회전 정규화, 후행 콤마 rightmost 빈값 폴백, Retry-After 미제공, 동시한도 차단 시도의 시간당 카운터 소모(TC-605), 캐시 장애 시 500(fail-closed), 다중 워커 시 락·캐시 분산(단일 워커 전제 재확인: 예약 메모리와 락도 프로세스 로컬), 고정 윈도우 2배 버스트.
+
+## R-9. 임시 아티팩트 정리(규칙 K)와 git status 원문
+`.harness-tmp/venv_05_unit23`, `.harness-tmp/_05_unit23`(스크립트·sqlite·media), 빈 `venv_05_unit23_x`, `pip install -e .`가 만든 `pdf_to_hwpx.egg-info/` 모두 삭제. `.harness-tmp/`는 빈 디렉터리.
+```
+ M docs/harness/03-system-design.md        (타 에이전트/오케스트레이터 소유)
+ M docs/harness/decisions.md               (오케스트레이터/unit-9)
+ M docs/harness/traceability.md            (오케스트레이터/unit-9)
+ M docs/harness/units/unit-9-note.md       (unit-9)
+ M docs/harness/units/unit-9-test.md       (unit-9)
+ M docs/harness/verify-log_03-system-design.md (타 에이전트)
+ M docs/harness/verify-log_unit-9-test.md  (unit-9)
+ M webapp/config/wsgi.py                   (unit-9)
+ M webapp/converter/ratelimit.py           (** 이 재작업 **)
+ M webapp/core/net_guard.py                (unit-9)
+?? docs/harness/units/unit-23-test.md      (unit-23 06단계)
+?? docs/harness/verify-log_unit-23-test.md (unit-23 06단계)
+?? docs/harness/verify-log_unit-9-note.md  (unit-9)
+```
+(이 note 추가분 `unit-23-note.md`와 `verify-log_unit-23-note.md`(신규)는 이 명령 이후 작성/수정.)
+
+## 공유 문서 갱신 요청 (오케스트레이터가 반영)
+- `traceability.md` REQ-026 / 구현 상태: "구현 완료(unit-23 v2) — DEF-023-01 수정 반영(예약 슬롯+IP별 락), 06 재검증 대기"
+- `traceability.md` REQ-026 / 작업 단위: 변경 없음(unit-23)
+- `decisions.md`: DEC-044 이행 기록 — "DEF-023-01을 ratelimit.py 슬롯 예약(스트라이프 락, TTL 상한 예약)으로 수정, executor/views 무변경. 범위 외 리스크(fail-open, IPv6, Retry-After)는 유지."
+- 규칙 A 미결 질문: 없음.

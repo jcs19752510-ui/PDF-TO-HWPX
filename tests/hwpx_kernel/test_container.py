@@ -1,310 +1,264 @@
-"""unit-4 AC-1 — `pdf_to_hwpx/hwpx_kernel/container.py` 검증.
-
-근거: docs/harness/units/unit-4-note.md §7 AC-1(1~9번),
-docs/harness/decisions.md DEC-017.
-
-**범위의 근본적 한계(반드시 읽을 것)**: 이 테스트 파일은 "우리가 만든 zip+XML이
-구조적으로 well-formed하고, 우리 스스로 정의한 규칙(엔트리 순서/이름/속성)과
-내부적으로 일관되는가"만 증명한다. 실제 한글(한컴오피스)이 이 파일을 경고 없이
-여는지는 개발 환경에 한글이 없어 전혀 검증하지 못했다(DEC-017). 이 사실을
-"PASS = 실제 호환성 검증됨"으로 잘못 해석해서는 안 된다 — 자세한 내용은
-docs/harness/units/unit-4-test.md §8(리스크)을 참고할 것.
-"""
+"""container.py: HwpxPackage와 패키지 메타 파트 (T1)."""
 
 from __future__ import annotations
 
+import re
 import zipfile
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from lxml import etree
 
 from pdf_to_hwpx.common.exceptions import ContainerBuildError
+from pdf_to_hwpx.hwpx_kernel import container
 from pdf_to_hwpx.hwpx_kernel.container import (
-    DEFAULT_SECTION_NAME,
-    MIMETYPE_CONTENT,
-    SECTION_DIR,
-    add_section_xml,
-    build_empty_container,
+    VERSION_OWN,
+    VERSION_R1_OBSERVED,
+    HwpxPackage,
+    PackageMeta,
+    format_preview_text,
+)
+from pdf_to_hwpx.hwpx_kernel.section import PageSetup, build_section_xml
+from pdf_to_hwpx.hwpx_kernel.styles import StyleRegistry
+
+from .helpers import (
+    NS,
+    all_xml_parts,
+    check_reference_integrity,
+    forbidden_hits,
+    open_zip,
+    parse,
 )
 
-EXPECTED_ENTRY_ORDER = [
+PROLOG = b'<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>'
+EXPECTED_ORDER = [
     "mimetype",
     "version.xml",
+    "Contents/header.xml",
+    "Contents/section0.xml",
+    "Preview/PrvText.txt",
     "settings.xml",
     "META-INF/container.xml",
+    "Contents/content.hpf",
     "META-INF/manifest.xml",
-    f"{SECTION_DIR}/header.xml",
-    f"{SECTION_DIR}/{DEFAULT_SECTION_NAME}",
-    f"{SECTION_DIR}/content.hpf",
 ]
 
 
-# ---------------------------------------------------------------------------
-# AC-1-1, AC-1-2: 정상 경로 — 파일 존재, zipfile로 예외 없이 열림, 엔트리 순서/개수
-# ---------------------------------------------------------------------------
+def make_package(meta: PackageMeta, sections: int = 1) -> HwpxPackage:
+    pkg = HwpxPackage(meta)
+    pkg.set_header(StyleRegistry().serialize_header(sections))
+    for _ in range(sections):
+        pkg.add_section(build_section_xml([], PageSetup.a4()))
+    return pkg
 
 
-def test_build_empty_container_creates_readable_zip(tmp_path):
-    output_path = tmp_path / "empty.hwpx"
-    build_empty_container(output_path)
-
-    assert output_path.exists()
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        # 예외 없이 열리고, 손상 검사(testzip)도 통과해야 한다.
-        assert zf.testzip() is None
+@pytest.fixture
+def built(fixed_meta):
+    return open_zip(make_package(fixed_meta).to_bytes())
 
 
-def test_build_empty_container_namelist_matches_expected_order(tmp_path):
-    output_path = tmp_path / "empty.hwpx"
-    build_empty_container(output_path)
-
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        assert zf.namelist() == EXPECTED_ENTRY_ORDER
-
-
-# ---------------------------------------------------------------------------
-# AC-1-3: mimetype이 첫 엔트리, 비압축, 내용 일치
-# ---------------------------------------------------------------------------
-
-
-def test_mimetype_is_first_entry_uncompressed_with_expected_content(tmp_path):
-    output_path = tmp_path / "empty.hwpx"
-    build_empty_container(output_path)
-
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        first_info = zf.infolist()[0]
-        assert first_info.filename == "mimetype"
-        assert first_info.compress_type == zipfile.ZIP_STORED
-        assert zf.read("mimetype") == MIMETYPE_CONTENT == b"application/hwp+zip"
+def test_zip_layout(built):
+    assert built.namelist() == EXPECTED_ORDER
+    first = built.infolist()[0]
+    assert first.filename == "mimetype" and first.compress_type == zipfile.ZIP_STORED
+    assert built.read("mimetype") == b"application/hwp+zip"  # 개행 없음, 19바이트
+    assert first.file_size == 19 and not first.extra
+    stored = {i.filename for i in built.infolist() if i.compress_type == zipfile.ZIP_STORED}
+    assert stored == {"mimetype", "version.xml"}
+    assert all(i.date_time == (1980, 1, 1, 0, 0, 0) for i in built.infolist())
+    assert built.testzip() is None
 
 
-# ---------------------------------------------------------------------------
-# AC-1-4: mimetype을 제외한 모든 엔트리가 well-formed XML
-# ---------------------------------------------------------------------------
+def test_all_xml_parts_well_formed_and_prolog(built):
+    parts = all_xml_parts(built)
+    assert set(parts) == {n for n in EXPECTED_ORDER if n.endswith((".xml", ".hpf"))}
+    for name in parts:
+        data = built.read(name)
+        assert data.startswith(PROLOG + b"<"), name
+        assert b"\n" not in data and not data.startswith(b"\xef\xbb\xbf"), name
 
 
-def test_all_non_mimetype_entries_are_well_formed_xml(tmp_path):
-    output_path = tmp_path / "empty.hwpx"
-    build_empty_container(output_path)
-
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        for name in zf.namelist():
-            if name == "mimetype":
-                continue
-            data = zf.read(name)
-            try:
-                root = etree.fromstring(data)
-            except etree.XMLSyntaxError as exc:  # pragma: no cover - 실패 시에만 도달
-                pytest.fail(f"{name}이 well-formed XML이 아님: {exc}")
-            assert root is not None
+def test_no_omitted_parts(built):
+    names = built.namelist()
+    assert not any(n.startswith(("BinData", "Contents/masterpage")) for n in names)
+    assert "Preview/PrvImage.png" not in names
 
 
-@pytest.mark.parametrize("name", [n for n in EXPECTED_ENTRY_ORDER if n != "mimetype"])
-def test_each_xml_part_individually_well_formed(tmp_path, name):
-    """개별 파트 단위로도 명시적으로 파싱해, 전체 루프 테스트가 놓칠 수 있는
-    부분(예: 특정 파트만 조용히 스킵되는 버그)을 배제한다."""
-    output_path = tmp_path / "empty.hwpx"
-    build_empty_container(output_path)
-
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        data = zf.read(name)
-    root = etree.fromstring(data)
-    assert etree.QName(root).localname  # 루트 태그의 로컬 이름이 비어있지 않음
-
-
-# ---------------------------------------------------------------------------
-# AC-1-5: 존재하지 않는 상위 디렉터리는 자동 생성되어 성공
-# ---------------------------------------------------------------------------
+def test_version_xml_r1_observed_and_own(fixed_meta):
+    r1 = parse(open_zip(make_package(PackageMeta(version=VERSION_R1_OBSERVED, created=fixed_meta.created)).to_bytes()), "version.xml")
+    own = parse(open_zip(make_package(fixed_meta).to_bytes()), "version.xml")
+    assert r1.tag == "{http://www.hancom.co.kr/hwpml/2011/version}HCFVersion"
+    assert len(r1) == 0
+    assert list(r1.attrib) == [
+        "tagetApplication", "major", "minor", "micro", "buildNumber", "os", "xmlVersion", "application", "appVersion"
+    ]
+    assert r1.get("tagetApplication") == "WORDPROCESSOR" and r1.get("xmlVersion") == "1.4"
+    assert r1.get("application") == "Hancom Office Hangul"
+    assert own.get("application") == "pdf-to-hwpx" == VERSION_OWN.application
+    # 두 변형은 application/appVersion만 다르다 (프로브 P1a/P1b의 전제)
+    diff = {k for k in r1.attrib if r1.get(k) != own.get(k)}
+    assert diff == {"application", "appVersion"}
 
 
-def test_build_empty_container_creates_missing_parent_directories(tmp_path):
-    output_path = tmp_path / "nested" / "does" / "not" / "exist" / "out.hwpx"
-    assert not output_path.parent.exists()
-
-    build_empty_container(output_path)
-
-    assert output_path.exists()
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        assert zf.namelist() == EXPECTED_ENTRY_ORDER
+def test_header_xml_version_matches_version_xml(built):
+    assert parse(built, "Contents/header.xml").get("version") == parse(built, "version.xml").get("xmlVersion")
 
 
-# ---------------------------------------------------------------------------
-# AC-1-6: 쓰기 불가능한 경로 -> ContainerBuildError
-# ---------------------------------------------------------------------------
+def test_container_xml(built):
+    root = parse(built, "META-INF/container.xml")
+    ocf = "urn:oasis:names:tc:opendocument:xmlns:container"
+    assert root.tag == f"{{{ocf}}}container" and root.attrib == {}  # version 속성 없음
+    assert root.nsmap == {"ocf": ocf, "hpf": "http://www.hancom.co.kr/schema/2011/hpf"}
+    files = [(e.get("full-path"), e.get("media-type")) for e in root.iter(f"{{{ocf}}}rootfile")]
+    assert files == [
+        ("Contents/content.hpf", "application/hwpml-package+xml"),
+        ("Preview/PrvText.txt", "text/plain"),
+    ]
 
 
-def test_build_empty_container_raises_container_build_error_when_output_is_directory(tmp_path):
-    """출력 경로 자체가 이미 디렉터리인 경우, zipfile이 IsADirectoryError/PermissionError류의
-    OSError를 던지고 이를 ContainerBuildError로 변환하는지 확인한다(디스크 공간 부족을
-    직접 시뮬레이션하기 어려워, "쓰기 자체가 원천적으로 불가능한 경로"로 동등한 실패
-    조건을 재현했다)."""
-    blocked_path = tmp_path / "blocked.hwpx"
-    blocked_path.mkdir()  # 파일이 있어야 할 자리에 디렉터리를 만들어 충돌시킨다.
+def test_manifest_xml_is_empty_odf_manifest(built):
+    root = parse(built, "META-INF/manifest.xml")
+    assert root.tag == "{urn:oasis:names:tc:opendocument:xmlns:manifest:1.0}manifest"
+    assert len(root) == 0 and root.attrib == {}
 
+
+def test_settings_xml(built):
+    root = parse(built, "settings.xml")
+    assert root.tag == "{http://www.hancom.co.kr/hwpml/2011/app}HWPApplicationSetting"
+    items = root.findall("{urn:oasis:names:tc:opendocument:xmlns:config:1.0}config-item-set/*")
+    assert len(items) == 7
+    assert {i.get("type") for i in items} == {"boolean", "short"}
+
+
+def test_content_hpf_metadata_manifest_spine(fixed_meta):
+    zf = open_zip(make_package(fixed_meta, sections=2).to_bytes())
+    root = parse(zf, "Contents/content.hpf")
+    assert root.tag == f"{{{NS['opf']}}}package"
+    assert dict(root.attrib) == {"version": "", "unique-identifier": "", "id": ""}
+    assert len(root.nsmap) == 15
+    meta = root.find("opf:metadata", NS)
+    assert [etree.QName(c).localname for c in meta] == ["title", "language"] + ["meta"] * 8
+    assert not meta.find("opf:title", NS).text  # 입력 제목 미기록 (DEC-060)
+    assert meta.find("opf:language", NS).text == "ko"
+    metas = {m.get("name"): m for m in meta.findall("opf:meta", NS)}
+    assert list(metas) == [
+        "creator", "subject", "description", "lastsaveby", "CreatedDate", "ModifiedDate", "date", "keyword"
+    ]
+    assert all(m.get("content") == "text" for m in metas.values())
+    assert metas["CreatedDate"].text == metas["ModifiedDate"].text == "2026-09-29T15:04:05Z"
+    assert metas["creator"].text == metas["lastsaveby"].text == "pdf-to-hwpx"
+    assert re.fullmatch(r"\d{4}년 \d{2}월 \d{2}일 [월화수목금토일]요일 (오전|오후) \d{1,2}:\d{2}:\d{2}", metas["date"].text)
+    assert metas["date"].text == "2026년 09월 29일 화요일 오후 3:04:05"
+    assert metas["subject"].text is None and metas["keyword"].text is None
+    items = [(i.get("id"), i.get("href"), i.get("media-type")) for i in root.findall("opf:manifest/opf:item", NS)]
+    assert items == [
+        ("header", "Contents/header.xml", "application/xml"),
+        ("section0", "Contents/section0.xml", "application/xml"),
+        ("section1", "Contents/section1.xml", "application/xml"),
+        ("settings", "settings.xml", "application/xml"),
+    ]
+    spine = [(i.get("idref"), i.get("linear")) for i in root.findall("opf:spine/opf:itemref", NS)]
+    assert spine == [("header", "yes"), ("section0", "yes"), ("section1", "yes")]
+    hrefs = {i[1] for i in items}
+    assert hrefs <= set(zf.namelist())  # manifest <-> zip 일치
+
+
+def test_content_hpf_never_records_input_title_or_paths(built):
+    data = built.read("Contents/content.hpf").decode("utf-8")
+    assert "<opf:title></opf:title>" in data
+
+
+def test_timestamps_are_utc_normalized():
+    kst = timezone(timedelta(hours=9))
+    meta = PackageMeta(created=datetime(2026, 9, 30, 0, 4, 5, tzinfo=kst))
+    root = parse(open_zip(make_package(meta).to_bytes()), "Contents/content.hpf")
+    created = root.xpath("//opf:meta[@name='CreatedDate']", namespaces=NS)[0]
+    assert created.text == "2026-09-29T15:04:05Z"
+
+
+def test_default_created_is_now_utc_without_microseconds():
+    stamp = PackageMeta().resolved_created()
+    assert stamp.microsecond == 0 and stamp.tzinfo is None
+
+
+def test_output_is_deterministic_for_fixed_meta(fixed_meta):
+    assert make_package(fixed_meta).to_bytes() == make_package(fixed_meta).to_bytes()
+
+
+def test_preview_text_entry(fixed_meta):
+    pkg = make_package(fixed_meta)
+    pkg.set_preview_text(format_preview_text(["첫 줄", "둘째 줄", "", "셋째"]))
+    zf = open_zip(pkg.to_bytes())
+    text = zf.read("Preview/PrvText.txt").decode("utf-8")
+    assert text == "<첫 줄>\r\n\r\n둘째 줄\r\n셋째"
+    assert not zf.read("Preview/PrvText.txt").startswith(b"\xef\xbb\xbf")
+
+
+def test_format_preview_text_limits_and_empty():
+    assert format_preview_text([]) == ""
+    assert format_preview_text(["", "   "]) == ""
+    long = format_preview_text(["가" * 5000, "나" * 5000])
+    assert len(long) == container.PREVIEW_MAX_CHARS
+    assert long.startswith("<가") and long.count(">") == 1
+    assert "\t" not in format_preview_text(["a\tb"]) and "\x00" not in format_preview_text(["a\x00b"])
+
+
+def test_package_requires_header_and_sections(fixed_meta):
     with pytest.raises(ContainerBuildError):
-        build_empty_container(blocked_path)
-
-
-def test_build_empty_container_error_chains_original_oserror(tmp_path):
-    """`raise ... from exc` 계약(unit-4-note.md 2-1절) 확인 — 원인 예외가 보존된다."""
-    blocked_path = tmp_path / "blocked2.hwpx"
-    blocked_path.mkdir()
-
-    with pytest.raises(ContainerBuildError) as excinfo:
-        build_empty_container(blocked_path)
-    assert excinfo.value.__cause__ is not None
-    assert isinstance(excinfo.value.__cause__, OSError)
-
-
-# ---------------------------------------------------------------------------
-# AC-1-7: add_section_xml 라운드트립 — 대상 섹션만 교체, 나머지 7개 그대로
-# ---------------------------------------------------------------------------
-
-
-def test_add_section_xml_replaces_only_target_entry(tmp_path):
-    output_path = tmp_path / "container.hwpx"
-    build_empty_container(output_path)
-
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        before_names = zf.namelist()
-        before_mimetype_info = zf.infolist()[0]
-        before_other_contents = {
-            name: zf.read(name) for name in before_names if name != f"{SECTION_DIR}/{DEFAULT_SECTION_NAME}"
-        }
-
-    new_section = (
-        '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" '
-        'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
-        '<hp:p paraShapeIDRef="0"><hp:run charShapeIDRef="0">'
-        "<hp:t>검증용 텍스트</hp:t>"
-        "</hp:run></hp:p></hs:sec>"
-    ).encode("utf-8")
-
-    add_section_xml(output_path, new_section)
-
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        after_names = zf.namelist()
-        after_mimetype_info = zf.infolist()[0]
-        after_section_content = zf.read(f"{SECTION_DIR}/{DEFAULT_SECTION_NAME}")
-        after_other_contents = {
-            name: zf.read(name) for name in after_names if name != f"{SECTION_DIR}/{DEFAULT_SECTION_NAME}"
-        }
-
-    # 엔트리 목록(순서 포함)과 mimetype 첫 엔트리/비압축 상태가 그대로 유지된다.
-    assert after_names == before_names
-    assert after_mimetype_info.filename == "mimetype"
-    assert after_mimetype_info.compress_type == zipfile.ZIP_STORED == before_mimetype_info.compress_type
-
-    # 교체 대상 외 7개 엔트리는 바이트 단위로 완전히 동일하다.
-    assert after_other_contents == before_other_contents
-
-    # 교체 대상은 새 내용으로 바뀌었고 well-formed XML이다.
-    assert after_section_content == new_section
-    parsed = etree.fromstring(after_section_content)
-    assert etree.QName(parsed).localname == "sec"
-
-
-def test_add_section_xml_inserts_new_section_when_name_not_present(tmp_path):
-    """AC-7의 "없으면 추가" 분기(container.py 42행 docstring) — 기존에 없는
-    section 이름을 주면 새 엔트리로 추가된다."""
-    output_path = tmp_path / "container.hwpx"
-    build_empty_container(output_path)
-
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        before_count = len(zf.namelist())
-
-    extra_xml = b"<hs:sec xmlns:hs=\"http://www.hancom.co.kr/hwpml/2011/section\"/>"
-    add_section_xml(output_path, extra_xml, section_name="section1.xml")
-
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        names = zf.namelist()
-        assert len(names) == before_count + 1
-        assert f"{SECTION_DIR}/section1.xml" in names
-        assert zf.read(f"{SECTION_DIR}/section1.xml") == extra_xml
-        # 기존 기본 섹션은 그대로 남아있다.
-        assert f"{SECTION_DIR}/{DEFAULT_SECTION_NAME}" in names
-
-
-# ---------------------------------------------------------------------------
-# AC-1-8: 존재하지 않는 container_path -> ContainerBuildError
-# ---------------------------------------------------------------------------
-
-
-def test_add_section_xml_raises_when_container_missing(tmp_path):
-    missing_path = tmp_path / "does_not_exist.hwpx"
-    assert not missing_path.exists()
-
+        HwpxPackage(fixed_meta).to_bytes()
+    pkg = HwpxPackage(fixed_meta)
+    pkg.set_header(StyleRegistry().serialize_header(1))
     with pytest.raises(ContainerBuildError):
-        add_section_xml(missing_path, b"<hs:sec/>")
+        pkg.to_bytes()
 
 
-# ---------------------------------------------------------------------------
-# AC-1-9: add_section_xml 실패 시 원본 훼손 없음 + .tmp 잔여물 없음
-# ---------------------------------------------------------------------------
-
-
-def test_add_section_xml_failure_does_not_corrupt_original_or_leave_tmp(tmp_path):
-    garbage_path = tmp_path / "garbage.hwpx"
-    garbage_bytes = b"this is not a valid zip file at all"
-    garbage_path.write_bytes(garbage_bytes)
-
+def test_sec_cnt_mismatch_and_bad_header_rejected(fixed_meta):
+    pkg = HwpxPackage(fixed_meta)
+    pkg.set_header(StyleRegistry().serialize_header(2))
+    pkg.add_section(build_section_xml([], PageSetup.a4()))
+    with pytest.raises(ContainerBuildError, match="secCnt"):
+        pkg.to_bytes()
+    pkg.set_header(b"<not xml")
+    with pytest.raises(ContainerBuildError, match="well-formed"):
+        pkg.to_bytes()
+    pkg.set_header(b'<a xmlns="x"/>')
     with pytest.raises(ContainerBuildError):
-        add_section_xml(garbage_path, b"<hs:sec/>")
-
-    # 원본 파일은 훼손되지 않고 그대로 남아있다.
-    assert garbage_path.read_bytes() == garbage_bytes
-
-    # 같은 디렉터리에 .tmp 임시 파일이 남지 않는다.
-    tmp_leftover = garbage_path.with_name(garbage_path.name + ".tmp")
-    assert not tmp_leftover.exists()
-    leftover_tmp_files = list(tmp_path.glob("*.tmp"))
-    assert leftover_tmp_files == []
+        pkg.to_bytes()
 
 
-def test_add_section_xml_failure_chains_original_exception(tmp_path):
-    garbage_path = tmp_path / "garbage2.hwpx"
-    garbage_path.write_bytes(b"not a zip")
-
-    with pytest.raises(ContainerBuildError) as excinfo:
-        add_section_xml(garbage_path, b"<hs:sec/>")
-    assert excinfo.value.__cause__ is not None
+def test_add_section_returns_index_and_count(fixed_meta):
+    pkg = HwpxPackage(fixed_meta)
+    assert pkg.add_section(b"x") == 0 and pkg.add_section(b"y") == 1
+    assert pkg.section_count == 2
 
 
-# ---------------------------------------------------------------------------
-# 경계값/회귀: 동일 경로에 재생성해도 골격이 매번 동일하게 재현된다(재현성).
-# ---------------------------------------------------------------------------
+def test_write_atomic_creates_parents_and_no_tmp_left(fixed_meta, out_dir):
+    target = out_dir / "nested" / "a.hwpx"
+    make_package(fixed_meta).write(target)
+    assert zipfile.is_zipfile(target)
+    assert [p.name for p in target.parent.iterdir()] == ["a.hwpx"]
 
 
-def test_build_empty_container_accepts_str_path_not_only_path_object(tmp_path):
-    """인터페이스 계약: `output_path`가 `pathlib.Path`뿐 아니라 `str`로 와도
-    (unit-5/6/7/8 호출부가 어느 타입을 넘길지 문서화되어 있지 않으므로) 내부에서
-    `Path(output_path)`로 변환해 동작해야 한다."""
-    output_path_str = str(tmp_path / "str_path.hwpx")
-    build_empty_container(output_path_str)  # type: ignore[arg-type]
-
-    with zipfile.ZipFile(output_path_str, mode="r") as zf:
-        assert zf.namelist() == EXPECTED_ENTRY_ORDER
+def test_write_failure_raises_container_build_error(fixed_meta, out_dir):
+    blocker = out_dir / "file"
+    blocker.write_text("x")
+    with pytest.raises(ContainerBuildError):
+        make_package(fixed_meta).write(blocker / "sub" / "a.hwpx")
 
 
-def test_add_section_xml_accepts_str_path(tmp_path):
-    output_path = tmp_path / "container_str.hwpx"
-    build_empty_container(output_path)
-
-    add_section_xml(str(output_path), b"<hs:sec/>")  # type: ignore[arg-type]
-
-    with zipfile.ZipFile(output_path, mode="r") as zf:
-        assert zf.read(f"{SECTION_DIR}/{DEFAULT_SECTION_NAME}") == b"<hs:sec/>"
+def test_write_overwrites_existing(fixed_meta, out_dir):
+    target = out_dir / "a.hwpx"
+    target.write_bytes(b"old")
+    make_package(fixed_meta).write(target)
+    assert zipfile.is_zipfile(target)
 
 
-def test_build_empty_container_is_reproducible_when_rebuilt(tmp_path):
-    output_path = tmp_path / "container.hwpx"
-    build_empty_container(output_path)
-    with output_path.open("rb") as f:
-        first_bytes = f.read()
+def test_package_is_self_consistent_and_has_no_b0_vocabulary(built):
+    assert check_reference_integrity(built) == []
+    assert forbidden_hits(built) == []
 
-    build_empty_container(output_path)  # 같은 경로에 덮어쓰기
-    with output_path.open("rb") as f:
-        second_bytes = f.read()
 
-    # 타임스탬프가 고정값(1980-01-01)이므로 바이트 단위로 완전히 동일해야 한다.
-    assert first_bytes == second_bytes
+def test_old_container_api_is_gone():
+    assert not hasattr(container, "build_empty_container")
+    assert not hasattr(container, "add_section_xml")
+    assert not hasattr(container, "add_bin_data")

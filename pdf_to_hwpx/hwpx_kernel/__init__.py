@@ -1,6 +1,6 @@
-"""HWPX 컨테이너/스키마 계약 모듈 모음 (unit-4 소관, 아직 생성되지 않음).
+"""HWPX 커널: 한글이 저장한 참조 구조(분석서)를 따르는 OWPML 생성 계층 (unit-4R).
 
-이 디렉터리는 unit-0의 스캐폴딩 지시에 따라 폴더 골격만 생성되었다.
-schema.py/container.py의 실제 구현은 unit-4의 책임이며, unit-0은 이 파일들을
-건드리지 않는다 (docs/harness/03-system-design.md §1-3).
+PDF와 IR을 모른다. 공개 API는 각 모듈에서 직접 import한다
+(``from pdf_to_hwpx.hwpx_kernel.container import HwpxPackage`` 등). 이 파일은 의도적으로
+비어 있는 것과 같다 -- unit-27(validator.py)이 이 파일을 고치지 않고 경로 import하기 때문이다.
 """

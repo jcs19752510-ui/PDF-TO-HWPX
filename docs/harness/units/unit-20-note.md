@@ -113,3 +113,203 @@
 | REQ-015 | `unit-20`(변경 없음) | "Not Started" → **"구현 완료(unit-20) — 6단계 단위테스트 대기. 단일페이지 4패널(업로드/진행/결과/조회불가)+개인정보처리방침 링크 통합 구현, GET /가 로컬에서 실제 HTML을 반환함을 확인(unit-20-note.md §4). AC-1~AC-16(unit-20-note.md §7) 06단계 인수조건으로 제공."** |
 
 (unit-21/24/25가 이미 자신들의 REQ 행을 "구현 완료(unit-N) — 6단계 단위테스트 대기" 톤으로 갱신해둔 것을 확인했음 — 동일한 문구 관례를 따름.)
+
+---
+
+## 재작업 이력 v2 (DEC-049, 규칙 F — 오류 은폐 결함 수정)
+
+- 속도 트랙: L3(변경 없음). 단독 실행(병렬 웨이브 아님). 수정 파일: `webapp/converter/views.py`만.
+- **결함**: `convert()`가 `from .executor import ...`의 모든 `ImportError`를 503("이용자가 많아 서버가 바쁩니다")으로 바꾸고 로그에도 "unit-21 대기 중"이라고만 남김. 실제로 platformdirs 누락(ModuleNotFoundError)이 '서버 바쁨'으로 위장되고 진짜 원인이 로그에 없었다. unit-21 완료(06 PASS) 후에는 불필요한 병렬 시기 임시 방어 코드였음. **위 2절 7번의 "방어 코드는 그대로 남겨둔다" 서술과 6절 "executor 미존재(ImportError)... 명시적으로 처리" 서술은 이 재작업으로 폐기(대체)된다.**
+
+### R-1. 결정과 근거
+| 후보 | 판단 |
+|---|---|
+| (a) 모듈 최상단 import | 기각. Django/gunicorn(--preload 없음)은 URLconf를 첫 요청 때 로드하므로 "기동 시 즉시 실패"가 실제로는 성립하지 않고, 실패 시 `GET /`·`/healthz`·download 등 무관 라우트까지 전부 500이 된다. `executor`는 `pdf_to_hwpx` 전체와 스레드풀을 import하므로 `manage.py check/migrate`, 다른 뷰 테스트도 무거워진다. (헬스체크 조기 실패라는 장점은 있으나 영향 범위 대비 과함.) |
+| (b) 지연 import 유지 + 전파(무처리) | 부분 채택 검토 → 기각. `production.py`에 LOGGING 설정이 없고 Django 기본 LOGGING의 console 핸들러는 DEBUG=True에서만 동작하므로, DEBUG=False에서 미처리 예외의 스택은 ADMINS 메일 외에 어디에도 출력되지 않는다(로그 유실 위험). 응답도 HTML 500이 된다. |
+| **채택: (b') 지연 import 유지 + `except ImportError`에서 `logger.exception`(전체 스택) + 일반 500 JSON** | 은폐가 아니라 "노출"이 목적인 처리: 503 위장 제거, 원인은 스택과 함께 stderr 로그에 남음, 응답은 내부 정보 없음. 잡는 범위는 import 문 한 줄뿐(다른 예외는 기존대로 전파). |
+
+- 500 문구: 04-ux-design.md 에러 코드표의 기존 `INTERNAL_ERROR` 문구 "예상치 못한 문제가 발생했습니다. 같은 문제가 계속되면 GitHub Issue로 알려주세요."를 그대로 사용(새 문구 창작 없음, 재시도 유도 표현 없음).
+- **import 위치를 업로드 저장·job 생성 앞(검증 통과 직후)으로 이동**: 새 실패 경로에서 고아 업로드 파일·PENDING job이 원천적으로 생기지 않는다(즉시 정리 코드 불필요, TTL 스윕 위임도 불필요). 기존 503(구 ImportError 경로)은 파일·job을 방치했었다. 400/413 검증 순서는 불변(검증 → import → 저장 → job → submit).
+- **유지**: `QueueFullError` 503(문구·job/파일 보존 동작 포함), 다른 뷰, `@ratelimit.enforce_rate_limit` 적용. 데코레이터는 `finally`에서 슬롯을 반환하고 202일 때만 추적으로 승계하므로 500(JSON 반환/예외 모두)에서도 반환됨을 실측(`_reservations == {}`).
+
+### R-2. 대조 실측 (격리 환경: 별도 venv, 별도 SQLite/MEDIA_ROOT, Django test Client, 포트 미사용; platformdirs만 미설치)
+공통: `GET /` 200, `GET /healthz` 200, 파일 없는 POST 400.
+
+| 항목 | 수정 전 | 수정 후 |
+|---|---|---|
+| `POST /convert`(유효 PDF, platformdirs 미설치) | **503** `{"error":"지금은 이용자가 많아 서버가 바쁩니다..."}` | **500** `{"error":"예상치 못한 문제가 발생했습니다. 같은 문제가 계속되면 GitHub Issue로 알려주세요."}` (패키지명/경로/스택 없음) |
+| 서버 로그 | `converter.executor를 아직 사용할 수 없습니다(unit-21 대기 중).` 한 줄, 원인 없음 | `converter.executor import 실패 — 배포 의존성 점검 필요` + 전체 Traceback, 끝줄 `ModuleNotFoundError: No module named 'platformdirs'` |
+| 생성된 job / 업로드 파일 | job 1건 + `uploads/<id>.pdf` 방치 | job 0건, 업로드 0건 |
+| rate-limit 예약 슬롯 | 반환됨 | 반환됨(`{}`) |
+
+platformdirs 설치 후 회귀: 유효 PDF 202 `{"job_id"}`, `.txt` 400, OCR 켜고 언어 없음 400, PENDING 25건 상태에서 제출 503(구 문구 동일)·슬롯 반환 — 전부 기존과 동일. (더미 PDF라 워커 스레드에서 CorruptedPdfError 로그가 찍히나 executor 정상 동작의 일부이며 무관.)
+
+### R-3. 게이트 1 / 게이트 2
+- 게이트 1: 저장소에 ruff/flake8/black/mypy/eslint 설정 없음(5절과 동일 사실). 대체로 `python -m py_compile views.py` 통과.
+- 게이트 2: [x] 명세 일치(03 §4-4 상태 매핑 불변, 04 INTERNAL_ERROR 문구 재사용) [x] 예외 삼킴 없음(로그+500, 다른 예외 전파) [x] 입력 검증 순서 불변 [x] 시크릿 없음 [x] 신규 의존성 없음(requirements 미수정) [x] 범위 외 변경 없음(views.py 한 파일 + 본 note).
+
+### R-4. 인수 조건 (06 추가분)
+- **AC-17**: executor import가 실패하는 환경(예: 격리 venv에서 platformdirs 미설치)에서 유효 PDF `POST /convert` → **500**, 바디에 "platformdirs"/경로/Traceback 없음, 서버 로그에 `ModuleNotFoundError` 포함 전체 스택, `ConversionJob` 0건·`uploads/` 0건, 같은 IP로 즉시 재제출 시 429가 아닌 동일 500(슬롯 반환), `GET /`·`/healthz`는 200.
+- **AC-5 유지**: QueueFullError 503 동작 불변.
+
+### R-5. 확인 필요 / 미결 (오케스트레이터·사용자에게 질문)
+1. **프런트 문구 불일치(수정 안 함, 범위 외)**: `app.js`는 상태 코드만 보고 500을 "기타 오류"로 처리하여 "문제가 발생했습니다. 다시 시도해주세요."를 표시한다(04 §1-2 표의 기타 오류 문구와는 일치). 서버 500 바디 문구는 사용되지 않는다. "재시도 유도 문구 금지" 방침을 UI까지 관철하려면 app.js에서 500만 분기(문구는 04의 INTERNAL_ERROR 또는 신규 승인 문구)해야 하며, 04 §1-2 표 수정 여부와 함께 결정이 필요하다.
+2. ~~500 경로는 `django.request` 로거를 타지 않으므로 production `ADMINS` 이메일(03 §7-2)이 발송되지 않는다(스택은 stderr 로그에만). 설치 오류는 배포 직후 로그로 드러나는 성격이라 수용했으나, 메일 통보가 필요하면 결정 요청.~~ **[정정 — R-8 참조, 06 실측으로 틀렸음이 확인됨]** 뷰가 반환한 500·503도 `django.request` 로거에 ERROR로 기록되며, DEBUG=False + ADMINS + 메일 설정이면 `mail_admins`로 발송된다(본문에 트레이스백 없음, 스택은 stderr 로그에만). DEC-050(2)·DEC-040(SMTP 허용) 연동은 사용자가 '나중에'로 정했고 코드·설정은 변경하지 않았다.
+3. 근본 원인(pdf_to_hwpx 의존성 platformdirs 등이 webapp/requirements.txt에서 누락)은 unit-26 소관 — 이 재작업에서 손대지 않음.
+
+### R-6. 공유 문서 갱신 요청
+- decisions.md: DEC-049 처리 결과 — "임시 ImportError→503 방어 제거, import 위치를 저장 앞으로 이동, ImportError는 logger.exception + 일반 500 JSON(04 INTERNAL_ERROR 문구), 최상단 import 기각 사유(URLconf 전체 영향/로드 비용)".
+- traceability.md: (REQ-001, 구현 상태, "unit-20 v2 재작업 완료 — 06 재검증 대기(AC-17)"), (REQ-015 동일).
+
+### R-7. git status 원문 (작업 종료 시점)
+```
+ M docs/harness/03-system-design.md        (타 단위/오케스트레이터 소유)
+ M docs/harness/decisions.md               (오케스트레이터)
+ M docs/harness/traceability.md            (오케스트레이터)
+ M docs/harness/units/unit-23-note.md      (unit-23)
+ M docs/harness/units/unit-9-note.md       (unit-9)
+ M docs/harness/units/unit-9-test.md       (unit-9)
+ M docs/harness/verify-log_03-system-design.md (03)
+ M docs/harness/verify-log_unit-9-test.md  (unit-9)
+ M webapp/config/wsgi.py                   (타 단위)
+ M webapp/converter/ratelimit.py           (unit-23)
+ M webapp/converter/views.py               (본 재작업)
+ M webapp/core/net_guard.py                (타 단위)
+?? docs/harness/units/unit-23-test.md      (unit-23)
+?? docs/harness/verify-log_unit-23-note.md (unit-23)
+?? docs/harness/verify-log_unit-23-test.md (unit-23)
+?? docs/harness/verify-log_unit-9-note.md  (unit-9)
+?? 작업상태/                                (오케스트레이터)
+```
+(추가로 본 재작업의 `docs/harness/units/unit-20-note.md`, `docs/harness/verify-log_unit-20-note.md`는 이 스냅샷 이후 변경/신규.) 임시 아티팩트(`.harness-tmp/venv_05_unit20b`, `_05_unit20b`)는 삭제 완료, 로컬 dev 서버 자원(venv_run_local, run_local.log, db.sqlite3, .dev-media)은 건드리지 않음.
+
+---
+
+## 재작업 이력 v3 (DEC-052, 규칙 F — DEF-020b-01 + 대기열 실효 용량 19 -> 20)
+
+- 속도 트랙: L3(변경 없음). 단독 실행(병렬 웨이브 아님). 수정 파일: `webapp/converter/views.py`, 본 note. `executor.py` 등 타 파일 무수정.
+
+### R-8-1. DEF-020b-01 (HEAD가 결과를 삭제)
+- `download`, `job_status`에 `@require_GET` 추가 -> HEAD/OPTIONS/POST/PUT/PATCH/DELETE는 405(`Allow: GET`). 뷰 본문이 실행되지 않으므로 파일 삭제·`downloaded_at`/`purged_at` 기록이 없다. (`require_GET`은 HEAD도 405로 거절한다 — `require_safe`가 아니므로 의도대로.)
+- 다른 뷰: `convert`는 이미 `require_http_methods(["POST"])`(변경 없음), `index`는 메서드 무제한(06 OBS-3, 기능 영향 없어 현행 유지).
+- app.js 확인(읽기): fetch는 `/convert`(POST), `/api/jobs/<id>/`(GET), `/download/<id>/`(GET) 3곳뿐. HEAD/OPTIONS 미사용이므로 405는 정상 흐름에서 발생하지 않는다.
+
+### R-8-2. 대기열 20건 허용 / 21번째 거절
+- 원인 재확인: `job.save()`(PENDING)가 `submit_job`의 `count >= 20`보다 앞서 실행돼 새 job이 스스로를 셈. executor.py 수정은 불필요했다(views.py만으로 해결).
+- 해결(views.py 안): 새 job을 **EXPIRED(카운트 대상 아님)로 저장** -> `submit_job` -> 성공 시 **조건부 UPDATE(status=EXPIRED인 경우만)로 PENDING 승격**. 세 단계를 모듈 `_submit_lock`(threading.Lock)으로 직렬화해 동시 요청이 서로의 예약 행을 못 세어 한도를 넘기는 것을 막는다(프로세스 1개 전제 — ratelimit.py와 동일). 워커가 승격 전에 PROCESSING/DONE으로 바꿨다면 덮어쓰지 않는다. 승격 UPDATE 자체 실패는 이미 제출됐으므로 로그만 남기고 폐기하지 않는다. EXPIRED는 job_id가 클라이언트에 반환되기 전(락 안)에만 존재해 폴링/다운로드에 노출되지 않는다.
+- 결과: in-flight(PENDING+PROCESSING) 0~19건 -> 202(20번째까지 허용), 20건 -> 503(21번째 거절). DONE/FAILED/EXPIRED는 계수 제외(기존과 동일).
+- **큐 포화 503 경로의 job/업로드 처리 — 기존 동작과 비교(동작 변경 있음)**
+
+| | 기존(v2) | v3 |
+|---|---|---|
+| 503 시 새 job 행 | PENDING으로 방치 | 삭제 |
+| 503 시 업로드 파일 | 방치(TTL 60분 스윕 대기) | 삭제(`storage.delete_job_objects`) |
+| 부작용 | 실행되지 않는 PENDING 행이 대기열 카운트를 최대 60분 점유 -> 포화가 스스로 길어지고 실효 용량이 계속 줄어듦 | 없음 |
+
+  이유: EXPIRED 예약 행을 그대로 두면 TTL 스윕(EXPIRED 제외)이 영영 정리하지 못해 누수되고, PENDING으로 되돌리면 위 팬텀 카운트 결함을 유지하게 된다. 그래서 폐기로 정리했다. `submit_job`의 QueueFullError 외 예외도 폐기 후 재전파(500)한다. **06 영향: TC-226/AC-5 기대값 "새 job 행·업로드 보존(21행/파일 1개)"은 "행·파일 증가 0"으로, TC-227 경계는 "19건 -> 503"이 아니라 "19건 -> 202, 20건 -> 503"으로 갱신 필요.**
+- 유지 확인: unit-23 예약 슬롯·`@ratelimit.enforce_rate_limit`(503/500에서 슬롯 `{}`), 503 문구, 업로드 검증 순서(400/413 -> import -> 저장 -> job -> submit), DEC-049 결과(import 위치, 일반 500, 고아 job 0건).
+
+### R-8-3. 게이트 / 검증
+- 게이트 1: ruff/flake8/mypy/eslint 설정 없음(재확인) -> `py_compile` 통과.
+- 게이트 2: [x] 03 §4-4/§5(20건 허용, 21번째 거절) 일치 [x] 예외 삼킴 없음(폐기 실패·승격 실패 모두 logger.exception) [x] 입력 검증 순서 불변 [x] 시크릿 없음 [x] 신규 의존성 없음 [x] 범위 외 변경 없음(views.py + 본 note).
+- 실측(격리 venv/DB/MEDIA_ROOT `_05_unit20c`, 포트 18201): TransactionTestCase 9건 + 실서버 e2e, 상세는 `verify-log_unit-20-note.md` 회차 3~4.
+  - 경계: 기존 0/18/19 -> 202, 20/21 -> 503(503에서 행·파일 증가 0, 풀 미호출), PENDING+PROCESSING 혼합 경계, 기존 18건에서 연속 3회 -> 202/202/503(최종 in-flight 20, 승격 후 전부 pending).
+  - 동시성: 8스레드(기존 17) -> 202x3 + 503x5, 느린 submit 2스레드(기존 19) -> 202+503, 워커가 먼저 PROCESSING으로 바꿔도 덮어쓰지 않음.
+  - 실패 경로: submit 예외 -> 500 + 행·파일 0 + 슬롯 `{}`, 503 4연속 슬롯 `{}` 후 정상 202.
+  - 실서버: DONE job에 HEAD/OPTIONS/POST(CSRF 포함) download·api 전부 405, 이후 파일 2개 유지, GET status 200, GET download 200(2100B) 후 재GET 404·파일 0, 정상 202 -> done, 서버 로그 Traceback 0.
+  - 뮤턴트 5종(EXPIRED->PENDING 되돌림, 락 제거, download/job_status의 `@require_GET` 각각 제거, 503 시 폐기 제거) 전부 FAIL로 검출. 락 제거 뮤턴트는 처음엔 생존해 "느린 submit 동시" 테스트를 추가한 뒤 검출.
+
+### R-8-4. 인수 조건 (06 추가/변경분)
+- **AC-18**: DONE+success job에 `HEAD`/`OPTIONS`/`POST` `/download/<id>/`와 `/api/jobs/<id>/` -> 405 + `Allow: GET`, 파일·`purged_at` 불변, 이후 GET download 200(정상 1회), 재GET 404.
+- **AC-5 변경**: in-flight 19건에서 제출 -> 202(20건째), 20건에서 제출 -> 503(기존 문구 정확 일치), 503 후 `ConversionJob`·업로드 파일 수 불변, `ratelimit._reservations == {}`. 승격 후 새 job status는 `pending`.
+- AC-1~17 회귀(특히 AC-17 platformdirs 미설치 시 500·고아 0건).
+
+### R-8-5. 확인 필요 / 미결
+1. 503 시 job·업로드를 보존하던 기존 동작(DEC-029 주석)을 폐기로 바꿨다(위 표). 보존을 원한다면 팬텀 PENDING 점유 결함도 유지된다 — 폐기를 권고, 사용자 확인 요청.
+2. `_submit_lock`은 프로세스 로컬이다. gunicorn worker 다중화 시 용량 판정이 한도를 넘길 수 있다(03 §2-1은 `--workers 1`).
+3. DEC-040/050 연동(500·503 ADMINS 메일)은 사용자 결정 '나중에' — 코드·설정 미변경.
+
+### R-8-6. 공유 문서 갱신 요청
+- decisions.md: DEC-052 처리 결과 — HEAD 405(`@require_GET`), 용량 20건(예약 행 EXPIRED 저장 -> submit -> PENDING 승격 + 락), 503 시 job·업로드 폐기로 동작 변경, DEC-050(2) 전제 정정(R-5-2).
+- traceability.md: (REQ-001, REQ-010, REQ-015, 구현 상태, "unit-20 v3 재작업 완료 — DEF-020b-01·용량 20건 수정, 06 미니 재검증 대기(AC-5 변경/AC-18)"), (REQ-029, 비고, "대기열 실효 용량 20건 정렬(unit-20 v3), 포화 503 시 팬텀 PENDING 제거").
+
+### R-8-7. git status 원문 (작업 종료 시점)
+```
+ M docs/harness/03-system-design.md               (오케스트레이터/타 단위)
+ M docs/harness/decisions.md                       (오케스트레이터)
+ M docs/harness/traceability.md                    (오케스트레이터)
+ M docs/harness/units/unit-20-note.md              (본 재작업 + 이전 05 재작업)
+ M docs/harness/units/unit-20-test.md              (unit-20 06)
+ M docs/harness/units/unit-23-note.md              (unit-23)
+ M docs/harness/units/unit-9-note.md               (unit-9)
+ M docs/harness/units/unit-9-test.md               (unit-9)
+ M docs/harness/verify-log_03-system-design.md     (03)
+ M docs/harness/verify-log_unit-20-test.md         (unit-20 06)
+ M docs/harness/verify-log_unit-9-test.md          (unit-9)
+ M webapp/config/wsgi.py                           (타 단위)
+ M webapp/converter/ratelimit.py                   (unit-23)
+ M webapp/converter/views.py                       (본 재작업 + v2)
+ M webapp/core/net_guard.py                        (타 단위)
+?? "HWPX\353\263\200\355\231\230\354\231\204\353\243\214/"   (오케스트레이터)
+?? docs/harness/units/unit-23-test.md              (unit-23)
+?? docs/harness/verify-log_unit-20-note.md         (unit-20 05, 본 재작업이 회차 추가)
+?? docs/harness/verify-log_unit-23-note.md         (unit-23)
+?? docs/harness/verify-log_unit-23-test.md         (unit-23)
+?? docs/harness/verify-log_unit-9-note.md          (unit-9)
+?? "\354\236\221\354\227\205\354\203\201\355\203\234/"           (오케스트레이터)
+?? "\354\260\270\354\241\260HWPX/"                      (오케스트레이터/타 작업)
+```
+임시 아티팩트(`.harness-tmp/venv_05_unit20c`, `t20c`, `t20c_data`)와 루트 `pdf_to_hwpx.egg-info`는 삭제 완료, 18201 서버 종료 확인. 오케스트레이터 dev 서버(8000)·`venv_run_local`·`run_local.log`·`db.sqlite3`·`.dev-media` 무접촉.
+
+---
+
+## 재작업 이력 v4 (DEC-063, 규칙 F — DEF-020c-01)
+
+### R-9. 재작업 내용
+- 속도 트랙: L3(변경 없음). 병렬 아님(단, unit-22 재작업이 cleanup.py를 동시 수정 중 — 본 호출은 읽기만). 수정 파일: `webapp/converter/views.py`, 본 note. 설계서 무수정.
+- 구조 변경(views.py `convert`):
+  1. 예약 행(EXPIRED)을 **업로드 저장보다 먼저** `job.save()`(락 밖). EXPIRED는 카운트 대상이 아니므로 대기열 판정 무영향이며, 이후 어느 지점에서 죽어도 스윕이 찾을 행이 남는다(기존엔 파일 저장~행 저장 사이 사망 시 행 없는 고아 파일이 생길 수 있었음).
+  2. `try: job.save -> save_uploaded_file -> _submit_and_promote / except QueueFullError: 503 / finally: 제출 성공 표시(`_HandOff.done`)가 없으면 `_discard_job`. `Exception`뿐 아니라 KeyboardInterrupt/SystemExit/GeneratorExit 등 BaseException도 finally를 타 폐기된다. 기존 `except Exception: _discard_job; raise` 제거(finally로 통합).
+  3. `_submit_and_promote`(구 `_save_and_submit`): 락 안에는 `submit_job` + 승격 UPDATE만(행 저장은 락 밖으로 이동 — 락 안 작업량 감소). `submit_job` 성공 직후 `handed_off.done=True` — 이후엔 어떤 예외(승격 중 BaseException 포함)에도 폐기하지 않는다(워커가 입력을 읽는 중일 수 있음).
+  4. `_discard_job`: 예외를 밖으로 내지 않음(사용자 응답 불변). 오브젝트 삭제 실패 시 행을 **남기고** 로그(`logger.exception`, job_id만; 파일명·개인정보 없음) — 행이 있어야 스윕이 재시도할 수 있다. 행 삭제 실패도 로그 후 스윕에 위임.
+- OBS-7: 승격 UPDATE 실패 시 1회 재시도 추가(로그 시도 n/2). 끝내 실패해도 폐기하지 않고 202 유지. executor.py:86에서 워커가 시작 시 status를 PROCESSING으로 저장하므로 그때 자연 복구되며, 그 전까지의 폴링 404 창은 남는다(DB 장애가 겹칠 때만). 더 근본적 해소(승격 실패 시 폴링을 EXPIRED 예약과 구분 등)는 동작 변경이 커서 하지 않음 — 질문 1.
+- (b) 프로세스 사망 계약 점검(cleanup.py 읽기만, 수정 없음): 뷰가 채우는 필드 = `status='expired'`, `purged_at=NULL`(미설정), `created_at=auto_now_add`(행 저장 시각, 업로드 저장보다 이전), `input_object_key` 설정. cleanup.py `TTL_MINUTES=60`. 계약(EXPIRED + purged_at IS NULL + created_at이 60분+유예 경과)과 **일치**. `os._exit` 별도 프로세스 재현: 종료 코드 9, 행 `expired`/`purged_at None`/`created_at` 존재, 업로드 파일 1개 잔존 = 스윕 회수 대상 그대로. 정상 폐기된 행은 삭제되므로 계약 조건에 걸리지 않고, 스윕이 정리한 행(purged_at 있음)·다운로드 완료 행(status DONE)과도 구분된다. 주의: 현재 작업트리의 cleanup.py는 아직 EXPIRED를 제외한다(unit-22 재작업 진행 중) — 스윕 쪽 완료 전까지 (b)는 미해소.
+
+### R-9-1. 게이트 / 검증
+- 게이트 1: ruff/flake8/mypy 설정 없음(재확인) -> `py_compile` 통과.
+- 게이트 2: [x] 설계·기존 동작 유지(503 문구·20건 경계·락·조건부 승격·DEC-049 import 위치/일반 500/HEAD 405 코드 무변경) [x] 예외 삼킴 없음(폐기·승격 실패 모두 logger.exception, BaseException은 삼키지 않고 전파) [x] 입력 검증 순서 불변 [x] 시크릿 없음 [x] 신규 의존성 없음 [x] 범위 외 변경 없음.
+- 실측(격리 venv/DB/MEDIA `_05_unit20d`, executor는 스텁, 별도 서버 미기동): 11건 TransactionTestCase. 수정 전(HEAD) 대조: 4 FAIL + 2 ERROR(BaseException 3경로 — submit·락 진입·파일 저장 직후 — 에서 행/파일 잔존, 승격 재시도 없음, 폐기 실패 예외 누출 등). 수정 후 11건 전부 OK. 뮤턴트(finally 폐기 무력화) 7건 FAIL로 검출. 프로세스 사망 시뮬레이션은 위 (b) 확인.
+- 검증 케이스: 정상 202/pending, 503 후 (0행,0파일), submit KeyboardInterrupt/SystemExit/파일저장 후 KeyboardInterrupt -> (0,0), RuntimeError -> (0,0), 오브젝트 삭제 실패 -> 503 유지+행 잔존(expired, purged_at NULL)+로그에 파일명 없음, 행 삭제 실패 -> 503 유지, 승격 1회 실패 -> 재시도 후 pending, 2회 실패 -> 202+expired 잔존(폐기 안 함), 승격 중 KeyboardInterrupt -> 행·입력 보존.
+- 임시 아티팩트 `.harness-tmp/_05_unit20d` 전체 삭제(테스트 스크립트 포함), egg-info 없음, 8000 서버·venv_run_local·db.sqlite3·.dev-media 무접촉. 검증 로그: `verify-log_unit-20-note.md` 회차 5~6.
+
+### R-9-2. 인수 조건 (06 추가)
+- **AC-19**: 예약 저장 이후 `submit_job`/락 진입/파일 저장 직후에서 `KeyboardInterrupt`·`SystemExit` 주입 시 행 0·업로드 0. 503·일반 Exception도 동일.
+- **AC-20**: 오브젝트 삭제 실패 주입 시 응답 불변(503), 행은 `expired`+`purged_at NULL`로 잔존, ERROR 로그에 job_id만(파일명 없음). 행 삭제 실패도 응답 불변.
+- **AC-21**: `submit_job` 성공 후에는 승격 실패/승격 중 BaseException에도 행·업로드 보존. 승격 1회 실패는 재시도로 pending.
+- AC-1~18 회귀(AC-5 20건 경계 포함).
+
+### R-9-3. 확인 필요 / 미결
+1. OBS-7 잔여 창(승격 2회 실패 시 워커 시작 전 폴링 404) 근본 해소 여부: 현재는 로그+재시도까지만. 필요하면 job_status가 EXPIRED를 pending으로 보이게 하는 방안이 있으나 예약 행 노출 정책 변경이라 결정 요청.
+2. (b)는 unit-22 재작업(스윕이 오래된 EXPIRED & purged_at NULL 행 정리) 완료가 전제. 06/07에서 두 단위 통합 확인 필요(유예 시간 값은 unit-22 소관).
+3. 프로세스 로컬 `_submit_lock`(다중 worker 한도 초과)은 R-8-5(2) 그대로.
+
+### R-9-4. 공유 문서 갱신 요청
+- decisions.md: DEC-063 처리 결과 — convert try/finally 폐기 구조, 행 선저장(락 밖), 폐기 실패 시 행 잔존(스윕 위임), 승격 1회 재시도.
+- traceability.md: (REQ-028, 비고, "unit-20 v4: 예약 행 폐기 finally 보장, 프로세스 사망분은 unit-22 스윕 계약(EXPIRED+purged_at NULL+60분+유예)에 의존"), (REQ-001/010/015, 구현 상태, "unit-20 v4 재작업 완료 — DEF-020c-01 (a)(c), 06 재검증 대기(AC-19~21)").
+- 03-system-design.md §4-4(3): OBS-9 정정(오케스트레이터 별도 처리)에 "행은 업로드 저장 전 EXPIRED로 예약 저장" 추가 반영 권장.
+
+### R-9-5. git status 원문 (작업 종료 시점)
+```
+ M docs/harness/03-system-design.md               (오케스트레이터)
+ M docs/harness/decisions.md                       (오케스트레이터)
+ M docs/harness/traceability.md                    (오케스트레이터)
+ M docs/harness/units/unit-20-test.md              (unit-20 06)
+ M docs/harness/units/unit-22-note.md              (unit-22 동시 재작업)
+ M docs/harness/verify-log_03-system-design.md     (03)
+ M docs/harness/verify-log_unit-20-test.md         (unit-20 06)
+ M webapp/converter/cleanup.py                     (unit-22 동시 재작업)
+ M webapp/converter/views.py                       (본 재작업)
+?? docs/harness/analysis/                          (오케스트레이터)
+?? docs/harness/verify-log_unit-22-note.md         (unit-22)
+```
+(unit-20-note.md와 verify-log_unit-20-note.md는 이전 git 스냅샷에 이미 반영되어 status에 안 보이거나 본 호출 수정분 — 본 재작업 소유.)
